@@ -1,0 +1,6 @@
+name: astrbot_plugin_novel_generator
+desc: 一个基于 AstrBot Agent 的小说创作与管理插件
+version: 0.1.0
+author: cassia
+display_name: 小说创作器
+short_desc: 通过 Agent 引导进行小说创作与管理

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>小说管理器</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1 id="page-title">小说管理器</h1>
+    </header>
+    <main>
+      <section id="novel-list-section">
+        <h2>小说列表</h2>
+        <div id="novel-list"></div>
+      </section>
+      <section id="novel-detail-section" style="display:none">
+        <div class="detail-header">
+          <button id="back-btn">← 返回列表</button>
+          <h2 id="novel-title"></h2>
+        </div>
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="characters">角色</button>
+          <button class="tab-btn" data-tab="relationships">关系</button>
+          <button class="tab-btn" data-tab="events">事件</button>
+          <button class="tab-btn" data-tab="outlines">大纲</button>
+          <button class="tab-btn" data-tab="chapters">章节</button>
+        </div>
+        <div id="tab-content">
+          <div id="tab-characters" class="tab-panel active"></div>
+          <div id="tab-relationships" class="tab-panel"></div>
+          <div id="tab-events" class="tab-panel"></div>
+          <div id="tab-outlines" class="tab-panel"></div>
+          <div id="tab-chapters" class="tab-panel"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
