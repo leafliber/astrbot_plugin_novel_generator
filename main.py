@@ -163,7 +163,7 @@ class NovelGeneratorPlugin(Star):
 
     @novel.command("write")
     async def novel_write(self, event: AstrMessageEvent, *, requirement: str):
-        """写故事，传入创作要求"""
+        """创作或修改小说，传入创作/修改要求"""
         session_id = self._get_session_id(event)
         novel = await self.storage.get_active_novel(session_id)
         if novel is None:
@@ -172,22 +172,7 @@ class NovelGeneratorPlugin(Star):
             )
             return
         context_info = self._build_context_info(novel)
-        prompt = f"{context_info}\n用户创作要求：{requirement}"
-        llm_resp = await self._run_agent(event, novel, prompt)
-        yield event.plain_result(llm_resp.completion_text)
-
-    @novel.command("revise")
-    async def novel_revise(self, event: AstrMessageEvent, *, requirement: str):
-        """修正故事，传入修正要求"""
-        session_id = self._get_session_id(event)
-        novel = await self.storage.get_active_novel(session_id)
-        if novel is None:
-            yield event.plain_result(
-                "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
-            )
-            return
-        context_info = self._build_context_info(novel)
-        prompt = f"{context_info}\n用户修正要求：{requirement}\n请根据要求修改已有内容，使用工具来更新数据。"
+        prompt = f"{context_info}\n用户要求：{requirement}\n请根据要求进行创作或修改，使用工具来创建新内容或更新已有数据。"
         llm_resp = await self._run_agent(event, novel, prompt)
         yield event.plain_result(llm_resp.completion_text)
 
@@ -335,20 +320,20 @@ class NovelGeneratorPlugin(Star):
             f"{prefix}/novels", self.api_list_novels, ["GET"], "List all novels"
         )
         self.context.register_web_api(
-            f"{prefix}/novels/{{novel_id}}",
+            f"{prefix}/novels/<novel_id>",
             self.api_get_novel,
             ["GET"],
             "Get novel detail",
         )
         for collection_name, cfg in _CRUD_CONFIG.items():
             self.context.register_web_api(
-                f"{prefix}/novels/{{novel_id}}/{collection_name}",
+                f"{prefix}/novels/<novel_id>/{collection_name}",
                 self._make_crud_list_handler(collection_name, cfg),
                 ["GET", "POST"],
                 f"{collection_name.capitalize()} CRUD",
             )
             self.context.register_web_api(
-                f"{prefix}/novels/{{novel_id}}/{collection_name}/{{item_id}}",
+                f"{prefix}/novels/<novel_id>/{collection_name}/<item_id>",
                 self._make_crud_item_handler(collection_name, cfg),
                 ["POST"],
                 f"{collection_name.capitalize()} item CRUD",

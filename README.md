@@ -56,8 +56,7 @@ git clone https://github.com/cassia/astrbot_plugin_novel_generator.git AstrBot/d
 
 | 指令 | 说明 | 示例 |
 |---|---|---|
-| `/novel write <要求>` | 写故事，传入创作要求，Agent 将自动使用工具管理数据 | `/novel write 写一段主角发现秘密的情节` |
-| `/novel revise <要求>` | 修正故事，传入修改要求 | `/novel revise 把第三章的结局改得更悬疑` |
+| `/novel write <要求>` | 创作或修改小说，传入创作/修改要求，Agent 将自动使用工具管理数据 | `/novel write 写一段主角发现秘密的情节` |
 | `/novel ask <问题>` | 对当前小说提问，Agent 可查询数据回答 | `/novel ask 主角和反派是什么关系` |
 
 ### 阅读与浏览
@@ -81,7 +80,7 @@ git clone https://github.com/cassia/astrbot_plugin_novel_generator.git AstrBot/d
 | 章节管理 | `manage_chapter` | create / query / update / list | 管理章节号、标题、正文内容、状态、摘要 |
 | 世界观设定 | `manage_world_setting` | create / query / update / delete / list | 管理世界观分类、名称、描述（时代、地理、魔法体系、社会结构等） |
 
-> 这些工具仅在 `/novel write`、`/novel revise`、`/novel ask` 指令触发 Agent 时可用，不会暴露给 AstrBot 全局。
+> 这些工具仅在 `/novel write`、`/novel ask` 指令触发 Agent 时可用，不会暴露给 AstrBot 全局。
 
 ## Web 管理面板
 
