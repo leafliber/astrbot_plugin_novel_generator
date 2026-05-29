@@ -4,8 +4,6 @@ import json
 from dataclasses import dataclass, field
 from typing import Optional
 
-from pydantic import Field as PydanticField
-
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
@@ -18,7 +16,7 @@ from .storage import NovelStorage
 class CharacterTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_character"
     description: str = "管理小说中的角色画像。支持创建、查询、修改、删除角色信息，包括姓名、性格、外貌、背景等。"
-    parameters: dict = PydanticField(
+    parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
@@ -126,7 +124,7 @@ class CharacterTool(FunctionTool[AstrAgentContext]):
 class RelationshipTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_relationship"
     description: str = "管理小说中角色之间的关系。支持创建、查询、修改、删除角色间关系，包括关系类型和描述。"
-    parameters: dict = PydanticField(
+    parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
@@ -256,7 +254,7 @@ class RelationshipTool(FunctionTool[AstrAgentContext]):
 class EventTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_event"
     description: str = "管理小说中的事件。支持创建、查询、修改、删除事件，包括事件名、时间线位置、描述、涉及角色等。"
-    parameters: dict = PydanticField(
+    parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
@@ -390,7 +388,7 @@ class EventTool(FunctionTool[AstrAgentContext]):
 class OutlineTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_outline"
     description: str = "管理小说的剧情大纲。支持创建、查询、修改、删除剧情大纲，包括章节规划和情节走向。"
-    parameters: dict = PydanticField(
+    parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
@@ -519,7 +517,7 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
     description: str = (
         "管理小说的章节内容。支持创建、查询、修改章节，包括章节号、标题和正文内容。"
     )
-    parameters: dict = PydanticField(
+    parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
@@ -628,7 +626,7 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
 class WorldSettingTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_world_setting"
     description: str = "管理小说的世界观设定。支持创建、查询、修改、删除世界观设定，包括时代背景、地理、魔法体系、社会结构等。"
-    parameters: dict = PydanticField(
+    parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {

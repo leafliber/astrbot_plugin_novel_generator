@@ -102,8 +102,7 @@ class TestCharacterTool:
 
     def test_parameters_has_action(self, tool):
         params = tool.parameters
-        if hasattr(params, "default_factory"):
-            params = params.default_factory()
+        assert isinstance(params, dict)
         assert "action" in params["properties"]
         assert "required" in params
 
