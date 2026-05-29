@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import dataclasses
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import ClassVar
 
 
 @dataclass
@@ -14,6 +16,13 @@ class Character:
     background: str = ""
     notes: str = ""
 
+    EDITABLE_FIELDS: ClassVar[set[str]] = {"name", "personality", "appearance", "background", "notes"}
+
+    def apply_updates(self, data: dict) -> None:
+        for k, v in data.items():
+            if k in self.EDITABLE_FIELDS:
+                setattr(self, k, v)
+
 
 @dataclass
 class Relationship:
@@ -22,6 +31,13 @@ class Relationship:
     character_b: str = ""
     relation_type: str = ""
     description: str = ""
+
+    EDITABLE_FIELDS: ClassVar[set[str]] = {"character_a", "character_b", "relation_type", "description"}
+
+    def apply_updates(self, data: dict) -> None:
+        for k, v in data.items():
+            if k in self.EDITABLE_FIELDS:
+                setattr(self, k, v)
 
 
 @dataclass
@@ -32,6 +48,13 @@ class Event:
     description: str = ""
     involved_characters: list[str] = field(default_factory=list)
 
+    EDITABLE_FIELDS: ClassVar[set[str]] = {"name", "timeline_position", "description", "involved_characters"}
+
+    def apply_updates(self, data: dict) -> None:
+        for k, v in data.items():
+            if k in self.EDITABLE_FIELDS:
+                setattr(self, k, v)
+
 
 @dataclass
 class Outline:
@@ -41,6 +64,13 @@ class Outline:
     plot_direction: str = ""
     notes: str = ""
 
+    EDITABLE_FIELDS: ClassVar[set[str]] = {"title", "chapter_plan", "plot_direction", "notes"}
+
+    def apply_updates(self, data: dict) -> None:
+        for k, v in data.items():
+            if k in self.EDITABLE_FIELDS:
+                setattr(self, k, v)
+
 
 @dataclass
 class Chapter:
@@ -48,6 +78,13 @@ class Chapter:
     number: int = 0
     title: str = ""
     content: str = ""
+
+    EDITABLE_FIELDS: ClassVar[set[str]] = {"number", "title", "content"}
+
+    def apply_updates(self, data: dict) -> None:
+        for k, v in data.items():
+            if k in self.EDITABLE_FIELDS:
+                setattr(self, k, v)
 
 
 @dataclass
@@ -63,8 +100,6 @@ class Novel:
     chapters: list[Chapter] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        import dataclasses
-
         return dataclasses.asdict(self)
 
     @classmethod

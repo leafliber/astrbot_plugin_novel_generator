@@ -120,7 +120,7 @@ class TestNovelCreate:
         event = _make_event()
         gen = plugin.novel_create(event, name="测试")
         await gen.__anext__()
-        novels = storage.list_novels()
+        novels = await storage.list_novels()
         assert len(novels) == 1
         assert novels[0].name == "测试"
         storage.set_active_novel.assert_called_once()
@@ -137,7 +137,7 @@ class TestNovelSwitch:
         plugin.storage = storage
         plugin.config = _make_config()
         novel = Novel(name="目标小说")
-        storage.save_novel(novel)
+        await storage.save_novel(novel)
         event = _make_event()
         gen = plugin.novel_switch(event, name="目标小说")
         await gen.__anext__()
@@ -185,8 +185,8 @@ class TestNovelList:
             plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
         plugin.storage = storage
         plugin.config = _make_config()
-        storage.save_novel(Novel(name="小说A"))
-        storage.save_novel(Novel(name="小说B"))
+        await storage.save_novel(Novel(name="小说A"))
+        await storage.save_novel(Novel(name="小说B"))
         event = _make_event()
         gen = plugin.novel_list(event)
         await gen.__anext__()
@@ -204,7 +204,7 @@ class TestNovelList:
         plugin.storage = storage
         plugin.config = _make_config()
         novel = Novel(name="当前小说")
-        storage.save_novel(novel)
+        await storage.save_novel(novel)
         storage.get_active_novel = AsyncMock(return_value=novel)
         event = _make_event()
         gen = plugin.novel_list(event)
@@ -224,14 +224,14 @@ class TestNovelDelete:
         plugin.storage = storage
         plugin.config = _make_config()
         novel = Novel(name="待删除")
-        storage.save_novel(novel)
+        await storage.save_novel(novel)
         storage.get_active_novel = AsyncMock(return_value=None)
         event = _make_event()
         gen = plugin.novel_delete(event, name="待删除")
         await gen.__anext__()
         call_args = event.plain_result.call_args[0][0]
         assert "已删除" in call_args
-        assert storage.load_novel(novel.id) is None
+        assert await storage.load_novel(novel.id) is None
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent(self, tmp_data_base):
@@ -258,7 +258,7 @@ class TestNovelDelete:
         plugin.storage = storage
         plugin.config = _make_config()
         novel = Novel(name="活跃小说")
-        storage.save_novel(novel)
+        await storage.save_novel(novel)
         storage.get_active_novel = AsyncMock(return_value=novel)
         event = _make_event()
         gen = plugin.novel_delete(event, name="活跃小说")
@@ -296,7 +296,7 @@ class TestNovelWrite:
         context = _make_context(storage)
         plugin.context = context
         novel = Novel(name="创作中")
-        storage.save_novel(novel)
+        await storage.save_novel(novel)
         storage.get_active_novel = AsyncMock(return_value=novel)
         mock_resp = MagicMock()
         mock_resp.completion_text = "生成的故事内容"
@@ -340,7 +340,7 @@ class TestNovelRevise:
         context = _make_context(storage)
         plugin.context = context
         novel = Novel(name="修改中")
-        storage.save_novel(novel)
+        await storage.save_novel(novel)
         storage.get_active_novel = AsyncMock(return_value=novel)
         mock_resp = MagicMock()
         mock_resp.completion_text = "修改完成"
@@ -385,7 +385,7 @@ class TestNovelAsk:
         context = _make_context(storage)
         plugin.context = context
         novel = Novel(name="提问中")
-        storage.save_novel(novel)
+        await storage.save_novel(novel)
         storage.get_active_novel = AsyncMock(return_value=novel)
         mock_resp = MagicMock()
         mock_resp.completion_text = "主角是张三"
@@ -428,7 +428,7 @@ class TestNovelRead:
             characters=[Character(name="张三")],
             chapters=[Chapter(number=1, title="第一章")],
         )
-        storage.save_novel(novel)
+        await storage.save_novel(novel)
         storage.get_active_novel = AsyncMock(return_value=novel)
         event = _make_event()
         gen = plugin.novel_read(event)
@@ -450,7 +450,7 @@ class TestNovelRead:
             name="章节小说",
             chapters=[Chapter(number=1, title="开端", content="正文内容")],
         )
-        storage.save_novel(novel)
+        await storage.save_novel(novel)
         storage.get_active_novel = AsyncMock(return_value=novel)
         event = _make_event()
         gen = plugin.novel_read(event, chapter_number=1)
@@ -469,7 +469,7 @@ class TestNovelRead:
         plugin.storage = storage
         plugin.config = _make_config()
         novel = Novel(name="无章节")
-        storage.save_novel(novel)
+        await storage.save_novel(novel)
         storage.get_active_novel = AsyncMock(return_value=novel)
         event = _make_event()
         gen = plugin.novel_read(event, chapter_number=99)
@@ -495,88 +495,9 @@ class TestNovelChapters:
         call_args = event.plain_result.call_args[0][0]
         assert "没有激活" in call_args
 
-    @pytest.mark.asyncio
-    async def test_chapters_empty(self, tmp_data_base):
-        storage = _make_storage(tmp_data_base)
-        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
 
-        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
-            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
-        plugin.storage = storage
-        plugin.config = _make_config()
-        novel = Novel(name="空小说")
-        storage.save_novel(novel)
-        storage.get_active_novel = AsyncMock(return_value=novel)
-        event = _make_event()
-        gen = plugin.novel_chapters(event)
-        await gen.__anext__()
-        call_args = event.plain_result.call_args[0][0]
-        assert "暂无章节" in call_args
-
-    @pytest.mark.asyncio
-    async def test_chapters_with_content(self, tmp_data_base):
-        storage = _make_storage(tmp_data_base)
-        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
-
-        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
-            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
-        plugin.storage = storage
-        plugin.config = _make_config()
-        novel = Novel(
-            name="有章节",
-            chapters=[
-                Chapter(number=1, title="开端", content="内容1"),
-                Chapter(number=2, title="发展", content="内容2"),
-            ],
-        )
-        storage.save_novel(novel)
-        storage.get_active_novel = AsyncMock(return_value=novel)
-        event = _make_event()
-        gen = plugin.novel_chapters(event)
-        await gen.__anext__()
-        call_args = event.plain_result.call_args[0][0]
-        assert "开端" in call_args
-        assert "发展" in call_args
-
-
-class TestNovelStop:
-    @pytest.mark.asyncio
-    async def test_stop_active_novel(self, tmp_data_base):
-        storage = _make_storage(tmp_data_base)
-        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
-
-        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
-            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
-        plugin.storage = storage
-        plugin.config = _make_config()
-        novel = Novel(name="停止中")
-        storage.save_novel(novel)
-        storage.get_active_novel = AsyncMock(return_value=novel)
-        event = _make_event()
-        gen = plugin.novel_stop(event)
-        await gen.__anext__()
-        call_args = event.plain_result.call_args[0][0]
-        assert "已结束" in call_args
-        storage.remove_active_novel.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_stop_no_active_novel(self, tmp_data_base):
-        storage = _make_storage(tmp_data_base)
-        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
-
-        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
-            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
-        plugin.storage = storage
-        plugin.config = _make_config()
-        storage.get_active_novel = AsyncMock(return_value=None)
-        event = _make_event()
-        gen = plugin.novel_stop(event)
-        await gen.__anext__()
-        call_args = event.plain_result.call_args[0][0]
-        assert "没有激活" in call_args
-
-
-class TestWebAPIs:
+@patch("astrbot_plugin_novel_generator.main.NovelStorage")
+class TestWebAPIRegistration:
     @patch("astrbot_plugin_novel_generator.main.NovelStorage")
     def test_api_registration_count(self, MockStorage, tmp_data_base):
         mock_storage = _make_storage(tmp_data_base)

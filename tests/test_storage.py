@@ -61,73 +61,83 @@ class TestNovelStorageInit:
 
 
 class TestNovelStorageCRUD:
-    def test_save_and_load_novel(self, storage, sample_novel):
-        storage.save_novel(sample_novel)
-        loaded = storage.load_novel(sample_novel.id)
+    @pytest.mark.asyncio
+    async def test_save_and_load_novel(self, storage, sample_novel):
+        await storage.save_novel(sample_novel)
+        loaded = await storage.load_novel(sample_novel.id)
         assert loaded is not None
         assert loaded.name == "测试小说"
         assert len(loaded.characters) == 1
         assert loaded.characters[0].name == "张三"
         assert len(loaded.chapters) == 1
 
-    def test_save_updates_timestamp(self, storage, sample_novel):
-        storage.save_novel(sample_novel)
+    @pytest.mark.asyncio
+    async def test_save_updates_timestamp(self, storage, sample_novel):
+        await storage.save_novel(sample_novel)
         first_updated = sample_novel.updated_at
         import time
 
         time.sleep(0.01)
-        storage.save_novel(sample_novel)
-        loaded = storage.load_novel(sample_novel.id)
+        await storage.save_novel(sample_novel)
+        loaded = await storage.load_novel(sample_novel.id)
         assert loaded.updated_at >= first_updated
 
-    def test_load_nonexistent_novel(self, storage):
-        result = storage.load_novel("nonexistent_id")
+    @pytest.mark.asyncio
+    async def test_load_nonexistent_novel(self, storage):
+        result = await storage.load_novel("nonexistent_id")
         assert result is None
 
-    def test_delete_novel(self, storage, sample_novel):
-        storage.save_novel(sample_novel)
-        assert storage.load_novel(sample_novel.id) is not None
-        result = storage.delete_novel(sample_novel.id)
+    @pytest.mark.asyncio
+    async def test_delete_novel(self, storage, sample_novel):
+        await storage.save_novel(sample_novel)
+        assert await storage.load_novel(sample_novel.id) is not None
+        result = await storage.delete_novel(sample_novel.id)
         assert result is True
-        assert storage.load_novel(sample_novel.id) is None
+        assert await storage.load_novel(sample_novel.id) is None
 
-    def test_delete_nonexistent_novel(self, storage):
-        result = storage.delete_novel("nonexistent_id")
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent_novel(self, storage):
+        result = await storage.delete_novel("nonexistent_id")
         assert result is False
 
-    def test_save_creates_json_file(self, storage, sample_novel):
-        storage.save_novel(sample_novel)
+    @pytest.mark.asyncio
+    async def test_save_creates_json_file(self, storage, sample_novel):
+        await storage.save_novel(sample_novel)
         path = storage._novel_path(sample_novel.id)
         assert path.exists()
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["name"] == "测试小说"
 
-    def test_json_file_encoding_utf8(self, storage):
+    @pytest.mark.asyncio
+    async def test_json_file_encoding_utf8(self, storage):
         novel = Novel(name="中文小说名 🎭")
-        storage.save_novel(novel)
+        await storage.save_novel(novel)
         path = storage._novel_path(novel.id)
         content = path.read_text(encoding="utf-8")
         assert "中文小说名 🎭" in content
 
 
 class TestNovelStorageList:
-    def test_list_novels_empty(self, storage):
-        novels = storage.list_novels()
+    @pytest.mark.asyncio
+    async def test_list_novels_empty(self, storage):
+        novels = await storage.list_novels()
         assert novels == []
 
-    def test_list_novels_multiple(self, storage):
+    @pytest.mark.asyncio
+    async def test_list_novels_multiple(self, storage):
         n1 = Novel(name="小说1")
         n2 = Novel(name="小说2")
-        storage.save_novel(n1)
-        storage.save_novel(n2)
-        novels = storage.list_novels()
+        await storage.save_novel(n1)
+        await storage.save_novel(n2)
+        novels = await storage.list_novels()
         assert len(novels) == 2
         names = {n.name for n in novels}
         assert names == {"小说1", "小说2"}
 
-    def test_list_novel_summaries(self, storage, sample_novel):
-        storage.save_novel(sample_novel)
-        summaries = storage.list_novel_summaries()
+    @pytest.mark.asyncio
+    async def test_list_novel_summaries(self, storage, sample_novel):
+        await storage.save_novel(sample_novel)
+        summaries = await storage.list_novel_summaries()
         assert len(summaries) == 1
         s = summaries[0]
         assert s["name"] == "测试小说"
@@ -137,12 +147,13 @@ class TestNovelStorageList:
         assert "created_at" in s
         assert "updated_at" in s
 
-    def test_list_novels_skips_corrupt_file(self, storage):
+    @pytest.mark.asyncio
+    async def test_list_novels_skips_corrupt_file(self, storage):
         corrupt_path = storage._novels_dir / "corrupt.json"
         corrupt_path.write_text("not valid json{{{", encoding="utf-8")
         n = Novel(name="正常小说")
-        storage.save_novel(n)
-        novels = storage.list_novels()
+        await storage.save_novel(n)
+        novels = await storage.list_novels()
         assert len(novels) == 1
         assert novels[0].name == "正常小说"
 
@@ -155,7 +166,7 @@ class TestNovelStorageKV:
 
     @pytest.mark.asyncio
     async def test_set_and_get_active_novel(self, storage_with_kv, sample_novel):
-        storage_with_kv.save_novel(sample_novel)
+        await storage_with_kv.save_novel(sample_novel)
         storage_with_kv._kv_plugin.get_kv_data = AsyncMock(
             return_value=sample_novel.id
         )

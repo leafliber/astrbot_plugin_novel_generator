@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
 
 from pydantic import Field as PydanticField
 
@@ -9,12 +10,8 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
-from .models import Character, Relationship, Event, Outline, Chapter, Novel
+from .models import Character, Chapter, Event, Outline, Relationship
 from .storage import NovelStorage
-
-
-def _novel_to_json(novel: Novel) -> str:
-    return json.dumps(novel.to_dict(), ensure_ascii=False, indent=2)
 
 
 @dataclass
@@ -58,12 +55,14 @@ class CharacterTool(FunctionTool[AstrAgentContext]):
             "required": ["action"],
         }
     )
+    storage: Optional[NovelStorage] = field(default=None, repr=False)
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
     ) -> ToolExecResult:
-        plugin = context.context.context
-        storage: NovelStorage = plugin.storage
+        storage = self.storage
+        if storage is None:
+            return "错误：存储未初始化。"
         novel = await storage.get_active_novel(context.context.event.unified_msg_origin)
         if novel is None:
             return "错误：当前没有激活的小说。"
@@ -77,7 +76,7 @@ class CharacterTool(FunctionTool[AstrAgentContext]):
                 notes=kwargs.get("notes", ""),
             )
             novel.characters.append(char)
-            storage.save_novel(novel)
+            await storage.save_novel(novel)
             return f"角色「{char.name}」已创建，ID: {char.id}"
         elif action == "query":
             cid = kwargs.get("character_id", "")
@@ -99,17 +98,8 @@ class CharacterTool(FunctionTool[AstrAgentContext]):
             cid = kwargs.get("character_id", "")
             for c in novel.characters:
                 if c.id == cid:
-                    if "name" in kwargs:
-                        c.name = kwargs["name"]
-                    if "personality" in kwargs:
-                        c.personality = kwargs["personality"]
-                    if "appearance" in kwargs:
-                        c.appearance = kwargs["appearance"]
-                    if "background" in kwargs:
-                        c.background = kwargs["background"]
-                    if "notes" in kwargs:
-                        c.notes = kwargs["notes"]
-                    storage.save_novel(novel)
+                    c.apply_updates(kwargs)
+                    await storage.save_novel(novel)
                     return f"角色「{c.name}」已更新"
             return f"未找到ID为 {cid} 的角色"
         elif action == "delete":
@@ -117,7 +107,7 @@ class CharacterTool(FunctionTool[AstrAgentContext]):
             before = len(novel.characters)
             novel.characters = [c for c in novel.characters if c.id != cid]
             if len(novel.characters) < before:
-                storage.save_novel(novel)
+                await storage.save_novel(novel)
                 return "角色已删除"
             return f"未找到ID为 {cid} 的角色"
         elif action == "list":
@@ -169,12 +159,14 @@ class RelationshipTool(FunctionTool[AstrAgentContext]):
             "required": ["action"],
         }
     )
+    storage: Optional[NovelStorage] = field(default=None, repr=False)
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
     ) -> ToolExecResult:
-        plugin = context.context.context
-        storage: NovelStorage = plugin.storage
+        storage = self.storage
+        if storage is None:
+            return "错误：存储未初始化。"
         novel = await storage.get_active_novel(context.context.event.unified_msg_origin)
         if novel is None:
             return "错误：当前没有激活的小说。"
@@ -187,7 +179,7 @@ class RelationshipTool(FunctionTool[AstrAgentContext]):
                 description=kwargs.get("description", ""),
             )
             novel.relationships.append(rel)
-            storage.save_novel(novel)
+            await storage.save_novel(novel)
             return f"关系已创建，ID: {rel.id}"
         elif action == "query":
             rid = kwargs.get("relationship_id", "")
@@ -208,15 +200,8 @@ class RelationshipTool(FunctionTool[AstrAgentContext]):
             rid = kwargs.get("relationship_id", "")
             for r in novel.relationships:
                 if r.id == rid:
-                    if "character_a" in kwargs:
-                        r.character_a = kwargs["character_a"]
-                    if "character_b" in kwargs:
-                        r.character_b = kwargs["character_b"]
-                    if "relation_type" in kwargs:
-                        r.relation_type = kwargs["relation_type"]
-                    if "description" in kwargs:
-                        r.description = kwargs["description"]
-                    storage.save_novel(novel)
+                    r.apply_updates(kwargs)
+                    await storage.save_novel(novel)
                     return "关系已更新"
             return f"未找到ID为 {rid} 的关系"
         elif action == "delete":
@@ -224,7 +209,7 @@ class RelationshipTool(FunctionTool[AstrAgentContext]):
             before = len(novel.relationships)
             novel.relationships = [r for r in novel.relationships if r.id != rid]
             if len(novel.relationships) < before:
-                storage.save_novel(novel)
+                await storage.save_novel(novel)
                 return "关系已删除"
             return f"未找到ID为 {rid} 的关系"
         elif action == "list":
@@ -277,12 +262,14 @@ class EventTool(FunctionTool[AstrAgentContext]):
             "required": ["action"],
         }
     )
+    storage: Optional[NovelStorage] = field(default=None, repr=False)
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
     ) -> ToolExecResult:
-        plugin = context.context.context
-        storage: NovelStorage = plugin.storage
+        storage = self.storage
+        if storage is None:
+            return "错误：存储未初始化。"
         novel = await storage.get_active_novel(context.context.event.unified_msg_origin)
         if novel is None:
             return "错误：当前没有激活的小说。"
@@ -295,7 +282,7 @@ class EventTool(FunctionTool[AstrAgentContext]):
                 involved_characters=kwargs.get("involved_characters", []),
             )
             novel.events.append(evt)
-            storage.save_novel(novel)
+            await storage.save_novel(novel)
             return f"事件「{evt.name}」已创建，ID: {evt.id}"
         elif action == "query":
             eid = kwargs.get("event_id", "")
@@ -316,15 +303,8 @@ class EventTool(FunctionTool[AstrAgentContext]):
             eid = kwargs.get("event_id", "")
             for e in novel.events:
                 if e.id == eid:
-                    if "name" in kwargs:
-                        e.name = kwargs["name"]
-                    if "timeline_position" in kwargs:
-                        e.timeline_position = kwargs["timeline_position"]
-                    if "description" in kwargs:
-                        e.description = kwargs["description"]
-                    if "involved_characters" in kwargs:
-                        e.involved_characters = kwargs["involved_characters"]
-                    storage.save_novel(novel)
+                    e.apply_updates(kwargs)
+                    await storage.save_novel(novel)
                     return f"事件「{e.name}」已更新"
             return f"未找到ID为 {eid} 的事件"
         elif action == "delete":
@@ -332,7 +312,7 @@ class EventTool(FunctionTool[AstrAgentContext]):
             before = len(novel.events)
             novel.events = [e for e in novel.events if e.id != eid]
             if len(novel.events) < before:
-                storage.save_novel(novel)
+                await storage.save_novel(novel)
                 return "事件已删除"
             return f"未找到ID为 {eid} 的事件"
         elif action == "list":
@@ -387,12 +367,14 @@ class OutlineTool(FunctionTool[AstrAgentContext]):
             "required": ["action"],
         }
     )
+    storage: Optional[NovelStorage] = field(default=None, repr=False)
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
     ) -> ToolExecResult:
-        plugin = context.context.context
-        storage: NovelStorage = plugin.storage
+        storage = self.storage
+        if storage is None:
+            return "错误：存储未初始化。"
         novel = await storage.get_active_novel(context.context.event.unified_msg_origin)
         if novel is None:
             return "错误：当前没有激活的小说。"
@@ -405,7 +387,7 @@ class OutlineTool(FunctionTool[AstrAgentContext]):
                 notes=kwargs.get("notes", ""),
             )
             novel.outlines.append(out)
-            storage.save_novel(novel)
+            await storage.save_novel(novel)
             return f"大纲「{out.title}」已创建，ID: {out.id}"
         elif action == "query":
             oid = kwargs.get("outline_id", "")
@@ -426,15 +408,8 @@ class OutlineTool(FunctionTool[AstrAgentContext]):
             oid = kwargs.get("outline_id", "")
             for o in novel.outlines:
                 if o.id == oid:
-                    if "title" in kwargs:
-                        o.title = kwargs["title"]
-                    if "chapter_plan" in kwargs:
-                        o.chapter_plan = kwargs["chapter_plan"]
-                    if "plot_direction" in kwargs:
-                        o.plot_direction = kwargs["plot_direction"]
-                    if "notes" in kwargs:
-                        o.notes = kwargs["notes"]
-                    storage.save_novel(novel)
+                    o.apply_updates(kwargs)
+                    await storage.save_novel(novel)
                     return f"大纲「{o.title}」已更新"
             return f"未找到ID为 {oid} 的大纲"
         elif action == "delete":
@@ -442,7 +417,7 @@ class OutlineTool(FunctionTool[AstrAgentContext]):
             before = len(novel.outlines)
             novel.outlines = [o for o in novel.outlines if o.id != oid]
             if len(novel.outlines) < before:
-                storage.save_novel(novel)
+                await storage.save_novel(novel)
                 return "大纲已删除"
             return f"未找到ID为 {oid} 的大纲"
         elif action == "list":
@@ -492,12 +467,14 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
             "required": ["action"],
         }
     )
+    storage: Optional[NovelStorage] = field(default=None, repr=False)
 
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
     ) -> ToolExecResult:
-        plugin = context.context.context
-        storage: NovelStorage = plugin.storage
+        storage = self.storage
+        if storage is None:
+            return "错误：存储未初始化。"
         novel = await storage.get_active_novel(context.context.event.unified_msg_origin)
         if novel is None:
             return "错误：当前没有激活的小说。"
@@ -510,7 +487,7 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
             )
             novel.chapters.append(ch)
             novel.chapters.sort(key=lambda x: x.number)
-            storage.save_novel(novel)
+            await storage.save_novel(novel)
             return f"第{ch.number}章「{ch.title}」已创建，ID: {ch.id}"
         elif action == "query":
             cid = kwargs.get("chapter_id", "")
@@ -530,14 +507,9 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
             cid = kwargs.get("chapter_id", "")
             for ch in novel.chapters:
                 if ch.id == cid:
-                    if "number" in kwargs:
-                        ch.number = kwargs["number"]
-                    if "title" in kwargs:
-                        ch.title = kwargs["title"]
-                    if "content" in kwargs:
-                        ch.content = kwargs["content"]
+                    ch.apply_updates(kwargs)
                     novel.chapters.sort(key=lambda x: x.number)
-                    storage.save_novel(novel)
+                    await storage.save_novel(novel)
                     return f"第{ch.number}章「{ch.title}」已更新"
             return f"未找到ID为 {cid} 的章节"
         elif action == "list":

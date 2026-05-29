@@ -1,14 +1,53 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from astrbot.api import AstrBotConfig
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
-from quart import jsonify, request
-from astrbot.api import AstrBotConfig
-from pathlib import Path
-from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-
-from .storage import NovelStorage, PLUGIN_NAME
-from .models import Novel
-from .tools import NOVEL_TOOLS
 from astrbot.core.agent.tool import ToolSet
+from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+from quart import jsonify, request
+
+from .models import (
+    Character,
+    Chapter,
+    Event,
+    Novel,
+    Outline,
+    Relationship,
+)
+from .storage import PLUGIN_NAME, NovelStorage
+from .tools import NOVEL_TOOLS
+
+_CRUD_CONFIG: dict[str, dict[str, Any]] = {
+    "characters": {
+        "model": Character,
+        "create_fields": ["name", "personality", "appearance", "background", "notes"],
+        "sort_after_create": False,
+    },
+    "relationships": {
+        "model": Relationship,
+        "create_fields": ["character_a", "character_b", "relation_type", "description"],
+        "sort_after_create": False,
+    },
+    "events": {
+        "model": Event,
+        "create_fields": ["name", "timeline_position", "description", "involved_characters"],
+        "sort_after_create": False,
+    },
+    "outlines": {
+        "model": Outline,
+        "create_fields": ["title", "chapter_plan", "plot_direction", "notes"],
+        "sort_after_create": False,
+    },
+    "chapters": {
+        "model": Chapter,
+        "create_fields": ["number", "title", "content"],
+        "sort_after_create": True,
+    },
+}
 
 
 class NovelGeneratorPlugin(Star):
@@ -35,7 +74,7 @@ class NovelGeneratorPlugin(Star):
         """创建一本新小说"""
         session_id = self._get_session_id(event)
         novel = Novel(name=name)
-        self.storage.save_novel(novel)
+        await self.storage.save_novel(novel)
         await self.storage.set_active_novel(session_id, novel.id)
         yield event.plain_result(
             f"小说「{name}」已创建并激活！使用 /novel write 开始创作。"
@@ -45,7 +84,7 @@ class NovelGeneratorPlugin(Star):
     async def novel_switch(self, event: AstrMessageEvent, name: str):
         """切换到指定小说"""
         session_id = self._get_session_id(event)
-        novels = self.storage.list_novels()
+        novels = await self.storage.list_novels()
         target = None
         for n in novels:
             if n.name == name:
@@ -63,7 +102,7 @@ class NovelGeneratorPlugin(Star):
         session_id = self._get_session_id(event)
         active_novel = await self.storage.get_active_novel(session_id)
         active_id = active_novel.id if active_novel else None
-        novels = self.storage.list_novels()
+        novels = await self.storage.list_novels()
         if not novels:
             yield event.plain_result("暂无小说，使用 /novel create 创建一本吧！")
             return
@@ -78,7 +117,7 @@ class NovelGeneratorPlugin(Star):
     async def novel_delete(self, event: AstrMessageEvent, name: str):
         """删除指定小说"""
         session_id = self._get_session_id(event)
-        novels = self.storage.list_novels()
+        novels = await self.storage.list_novels()
         target = None
         for n in novels:
             if n.name == name:
@@ -90,8 +129,27 @@ class NovelGeneratorPlugin(Star):
         active_novel = await self.storage.get_active_novel(session_id)
         if active_novel and active_novel.id == target.id:
             await self.storage.remove_active_novel(session_id)
-        self.storage.delete_novel(target.id)
+        await self.storage.delete_novel(target.id)
         yield event.plain_result(f"小说「{name}」已删除。")
+
+    async def _run_agent(
+        self, event: AstrMessageEvent, novel: Novel, prompt: str, *, system_prompt: str | None = None
+    ):
+        umo = event.unified_msg_origin
+        prov_id = await self.context.get_current_chat_provider_id(umo=umo)
+        tools = ToolSet([t(storage=self.storage) for t in NOVEL_TOOLS])
+        resolved_system_prompt = system_prompt if system_prompt is not None else self.config.get("novel_system_prompt", "")
+        max_steps = self.config.get("max_agent_steps", 30)
+        timeout = self.config.get("tool_call_timeout", 60)
+        return await self.context.tool_loop_agent(
+            event=event,
+            chat_provider_id=prov_id,
+            prompt=prompt,
+            system_prompt=resolved_system_prompt,
+            tools=tools,
+            max_steps=max_steps,
+            tool_call_timeout=timeout,
+        )
 
     @novel.command("write")
     async def novel_write(self, event: AstrMessageEvent, *, requirement: str):
@@ -103,29 +161,9 @@ class NovelGeneratorPlugin(Star):
                 "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
             )
             return
-        umo = event.unified_msg_origin
-        prov_id = await self.context.get_current_chat_provider_id(umo=umo)
-        tools = ToolSet([t() for t in NOVEL_TOOLS])
-        system_prompt = self.config.get("novel_system_prompt", "")
-        context_info = (
-            f"当前小说：「{novel.name}」\n"
-            f"已有角色：{len(novel.characters)} 个\n"
-            f"已有章节：{len(novel.chapters)} 章\n"
-            f"已有事件：{len(novel.events)} 个\n"
-            f"已有大纲：{len(novel.outlines)} 条\n"
-        )
+        context_info = self._build_context_info(novel)
         prompt = f"{context_info}\n用户创作要求：{requirement}"
-        max_steps = self.config.get("max_agent_steps", 30)
-        timeout = self.config.get("tool_call_timeout", 60)
-        llm_resp = await self.context.tool_loop_agent(
-            event=event,
-            chat_provider_id=prov_id,
-            prompt=prompt,
-            system_prompt=system_prompt,
-            tools=tools,
-            max_steps=max_steps,
-            tool_call_timeout=timeout,
-        )
+        llm_resp = await self._run_agent(event, novel, prompt)
         yield event.plain_result(llm_resp.completion_text)
 
     @novel.command("revise")
@@ -138,29 +176,9 @@ class NovelGeneratorPlugin(Star):
                 "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
             )
             return
-        umo = event.unified_msg_origin
-        prov_id = await self.context.get_current_chat_provider_id(umo=umo)
-        tools = ToolSet([t() for t in NOVEL_TOOLS])
-        system_prompt = self.config.get("novel_system_prompt", "")
-        context_info = (
-            f"当前小说：「{novel.name}」\n"
-            f"已有角色：{len(novel.characters)} 个\n"
-            f"已有章节：{len(novel.chapters)} 章\n"
-            f"已有事件：{len(novel.events)} 个\n"
-            f"已有大纲：{len(novel.outlines)} 条\n"
-        )
+        context_info = self._build_context_info(novel)
         prompt = f"{context_info}\n用户修正要求：{requirement}\n请根据要求修改已有内容，使用工具来更新数据。"
-        max_steps = self.config.get("max_agent_steps", 30)
-        timeout = self.config.get("tool_call_timeout", 60)
-        llm_resp = await self.context.tool_loop_agent(
-            event=event,
-            chat_provider_id=prov_id,
-            prompt=prompt,
-            system_prompt=system_prompt,
-            tools=tools,
-            max_steps=max_steps,
-            tool_call_timeout=timeout,
-        )
+        llm_resp = await self._run_agent(event, novel, prompt)
         yield event.plain_result(llm_resp.completion_text)
 
     @novel.command("ask")
@@ -173,26 +191,20 @@ class NovelGeneratorPlugin(Star):
                 "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
             )
             return
-        umo = event.unified_msg_origin
-        prov_id = await self.context.get_current_chat_provider_id(umo=umo)
-        tools = ToolSet([t() for t in NOVEL_TOOLS])
-        context_info = (
-            f"当前小说：「{novel.name}」\n"
-            f"角色：{len(novel.characters)} 个 | 章节：{len(novel.chapters)} 章 | "
-            f"事件：{len(novel.events)} 个 | 大纲：{len(novel.outlines)} 条\n"
-        )
+        context_info = self._build_context_info(novel)
         prompt = f"{context_info}\n用户问题：{question}\n请基于小说内容回答，如需查看详细数据请使用工具查询。"
-        max_steps = self.config.get("max_agent_steps", 30)
-        timeout = self.config.get("tool_call_timeout", 60)
-        llm_resp = await self.context.tool_loop_agent(
-            event=event,
-            chat_provider_id=prov_id,
-            prompt=prompt,
-            tools=tools,
-            max_steps=max_steps,
-            tool_call_timeout=timeout,
-        )
+        llm_resp = await self._run_agent(event, novel, prompt)
         yield event.plain_result(llm_resp.completion_text)
+
+    @staticmethod
+    def _build_context_info(novel: Novel) -> str:
+        return (
+            f"当前小说：「{novel.name}」\n"
+            f"已有角色：{len(novel.characters)} 个\n"
+            f"已有章节：{len(novel.chapters)} 章\n"
+            f"已有事件：{len(novel.events)} 个\n"
+            f"已有大纲：{len(novel.outlines)} 条\n"
+        )
 
     @novel.command("read")
     async def novel_read(self, event: AstrMessageEvent, chapter_number: int = 0):
@@ -274,270 +286,77 @@ class NovelGeneratorPlugin(Star):
             ["GET"],
             "Get novel detail",
         )
-        self.context.register_web_api(
-            f"{prefix}/novels/{{novel_id}}/characters",
-            self.api_crud_characters,
-            ["GET", "POST"],
-            "Character CRUD",
-        )
-        self.context.register_web_api(
-            f"{prefix}/novels/{{novel_id}}/characters/{{item_id}}",
-            self.api_crud_character_item,
-            ["POST"],
-            "Character item CRUD",
-        )
-        self.context.register_web_api(
-            f"{prefix}/novels/{{novel_id}}/relationships",
-            self.api_crud_relationships,
-            ["GET", "POST"],
-            "Relationship CRUD",
-        )
-        self.context.register_web_api(
-            f"{prefix}/novels/{{novel_id}}/relationships/{{item_id}}",
-            self.api_crud_relationship_item,
-            ["POST"],
-            "Relationship item CRUD",
-        )
-        self.context.register_web_api(
-            f"{prefix}/novels/{{novel_id}}/events",
-            self.api_crud_events,
-            ["GET", "POST"],
-            "Event CRUD",
-        )
-        self.context.register_web_api(
-            f"{prefix}/novels/{{novel_id}}/events/{{item_id}}",
-            self.api_crud_event_item,
-            ["POST"],
-            "Event item CRUD",
-        )
-        self.context.register_web_api(
-            f"{prefix}/novels/{{novel_id}}/outlines",
-            self.api_crud_outlines,
-            ["GET", "POST"],
-            "Outline CRUD",
-        )
-        self.context.register_web_api(
-            f"{prefix}/novels/{{novel_id}}/outlines/{{item_id}}",
-            self.api_crud_outline_item,
-            ["POST"],
-            "Outline item CRUD",
-        )
-        self.context.register_web_api(
-            f"{prefix}/novels/{{novel_id}}/chapters",
-            self.api_crud_chapters,
-            ["GET", "POST"],
-            "Chapter CRUD",
-        )
-        self.context.register_web_api(
-            f"{prefix}/novels/{{novel_id}}/chapters/{{item_id}}",
-            self.api_crud_chapter_item,
-            ["POST"],
-            "Chapter item CRUD",
-        )
+        for collection_name, cfg in _CRUD_CONFIG.items():
+            self.context.register_web_api(
+                f"{prefix}/novels/{{novel_id}}/{collection_name}",
+                self._make_crud_list_handler(collection_name, cfg),
+                ["GET", "POST"],
+                f"{collection_name.capitalize()} CRUD",
+            )
+            self.context.register_web_api(
+                f"{prefix}/novels/{{novel_id}}/{collection_name}/{{item_id}}",
+                self._make_crud_item_handler(collection_name, cfg),
+                ["POST"],
+                f"{collection_name.capitalize()} item CRUD",
+            )
 
     async def api_list_novels(self):
-        summaries = self.storage.list_novel_summaries()
+        summaries = await self.storage.list_novel_summaries()
         return jsonify(summaries)
 
     async def api_get_novel(self, novel_id):
-        novel = self.storage.load_novel(novel_id)
+        novel = await self.storage.load_novel(novel_id)
         if novel is None:
             return jsonify({"error": "Novel not found"}), 404
         return jsonify(novel.to_dict())
 
-    async def api_crud_characters(self, novel_id):
-        novel = self.storage.load_novel(novel_id)
-        if novel is None:
-            return jsonify({"error": "Novel not found"}), 404
-        if request.method == "GET":
-            return jsonify([c.__dict__ for c in novel.characters])
-        elif request.method == "POST":
+    def _make_crud_list_handler(self, collection_name: str, cfg: dict):
+        model_cls = cfg["model"]
+        create_fields = cfg["create_fields"]
+        sort_after_create = cfg["sort_after_create"]
+
+        async def handler(novel_id):
+            novel = await self.storage.load_novel(novel_id)
+            if novel is None:
+                return jsonify({"error": "Novel not found"}), 404
+            items = getattr(novel, collection_name)
+            if request.method == "GET":
+                return jsonify([item.__dict__ for item in items])
+            elif request.method == "POST":
+                data = await request.get_json()
+                kwargs = {f: data.get(f, "" if f != "involved_characters" else []) for f in create_fields}
+                if "number" in kwargs and kwargs["number"] == "":
+                    kwargs["number"] = len(items) + 1
+                item = model_cls(**kwargs)
+                items.append(item)
+                if sort_after_create:
+                    items.sort(key=lambda x: x.number)
+                await self.storage.save_novel(novel)
+                return jsonify(item.__dict__)
+
+        return handler
+
+    def _make_crud_item_handler(self, collection_name: str, cfg: dict):
+        sort_after_update = cfg.get("sort_after_create", False)
+
+        async def handler(novel_id, item_id):
+            novel = await self.storage.load_novel(novel_id)
+            if novel is None:
+                return jsonify({"error": "Novel not found"}), 404
+            items = getattr(novel, collection_name)
             data = await request.get_json()
-            from .models import Character as CharModel
+            if data.get("_action") == "delete":
+                setattr(novel, collection_name, [i for i in items if i.id != item_id])
+                await self.storage.save_novel(novel)
+                return jsonify({"success": True})
+            else:
+                for item in items:
+                    if item.id == item_id:
+                        item.apply_updates(data)
+                        if sort_after_update:
+                            items.sort(key=lambda x: x.number)
+                        await self.storage.save_novel(novel)
+                        return jsonify(item.__dict__)
+                return jsonify({"error": f"{collection_name.rstrip('s').capitalize()} not found"}), 404
 
-            char = CharModel(
-                name=data.get("name", ""),
-                personality=data.get("personality", ""),
-                appearance=data.get("appearance", ""),
-                background=data.get("background", ""),
-                notes=data.get("notes", ""),
-            )
-            novel.characters.append(char)
-            self.storage.save_novel(novel)
-            return jsonify(char.__dict__)
-
-    async def api_crud_character_item(self, novel_id, item_id):
-        novel = self.storage.load_novel(novel_id)
-        if novel is None:
-            return jsonify({"error": "Novel not found"}), 404
-        data = await request.get_json()
-        if data.get("_action") == "delete":
-            novel.characters = [c for c in novel.characters if c.id != item_id]
-            self.storage.save_novel(novel)
-            return jsonify({"success": True})
-        else:
-            for c in novel.characters:
-                if c.id == item_id:
-                    for k, v in data.items():
-                        if hasattr(c, k) and k != "id" and k != "_action":
-                            setattr(c, k, v)
-                    self.storage.save_novel(novel)
-                    return jsonify(c.__dict__)
-            return jsonify({"error": "Character not found"}), 404
-
-    async def api_crud_relationships(self, novel_id):
-        novel = self.storage.load_novel(novel_id)
-        if novel is None:
-            return jsonify({"error": "Novel not found"}), 404
-        if request.method == "GET":
-            return jsonify([r.__dict__ for r in novel.relationships])
-        elif request.method == "POST":
-            data = await request.get_json()
-            from .models import Relationship as RelModel
-
-            rel = RelModel(
-                character_a=data.get("character_a", ""),
-                character_b=data.get("character_b", ""),
-                relation_type=data.get("relation_type", ""),
-                description=data.get("description", ""),
-            )
-            novel.relationships.append(rel)
-            self.storage.save_novel(novel)
-            return jsonify(rel.__dict__)
-
-    async def api_crud_relationship_item(self, novel_id, item_id):
-        novel = self.storage.load_novel(novel_id)
-        if novel is None:
-            return jsonify({"error": "Novel not found"}), 404
-        data = await request.get_json()
-        if data.get("_action") == "delete":
-            novel.relationships = [r for r in novel.relationships if r.id != item_id]
-            self.storage.save_novel(novel)
-            return jsonify({"success": True})
-        else:
-            for r in novel.relationships:
-                if r.id == item_id:
-                    for k, v in data.items():
-                        if hasattr(r, k) and k != "id" and k != "_action":
-                            setattr(r, k, v)
-                    self.storage.save_novel(novel)
-                    return jsonify(r.__dict__)
-            return jsonify({"error": "Relationship not found"}), 404
-
-    async def api_crud_events(self, novel_id):
-        novel = self.storage.load_novel(novel_id)
-        if novel is None:
-            return jsonify({"error": "Novel not found"}), 404
-        if request.method == "GET":
-            return jsonify([e.__dict__ for e in novel.events])
-        elif request.method == "POST":
-            data = await request.get_json()
-            from .models import Event as EventModel
-
-            evt = EventModel(
-                name=data.get("name", ""),
-                timeline_position=data.get("timeline_position", ""),
-                description=data.get("description", ""),
-                involved_characters=data.get("involved_characters", []),
-            )
-            novel.events.append(evt)
-            self.storage.save_novel(novel)
-            return jsonify(evt.__dict__)
-
-    async def api_crud_event_item(self, novel_id, item_id):
-        novel = self.storage.load_novel(novel_id)
-        if novel is None:
-            return jsonify({"error": "Novel not found"}), 404
-        data = await request.get_json()
-        if data.get("_action") == "delete":
-            novel.events = [e for e in novel.events if e.id != item_id]
-            self.storage.save_novel(novel)
-            return jsonify({"success": True})
-        else:
-            for e in novel.events:
-                if e.id == item_id:
-                    for k, v in data.items():
-                        if hasattr(e, k) and k != "id" and k != "_action":
-                            setattr(e, k, v)
-                    self.storage.save_novel(novel)
-                    return jsonify(e.__dict__)
-            return jsonify({"error": "Event not found"}), 404
-
-    async def api_crud_outlines(self, novel_id):
-        novel = self.storage.load_novel(novel_id)
-        if novel is None:
-            return jsonify({"error": "Novel not found"}), 404
-        if request.method == "GET":
-            return jsonify([o.__dict__ for o in novel.outlines])
-        elif request.method == "POST":
-            data = await request.get_json()
-            from .models import Outline as OutlineModel
-
-            out = OutlineModel(
-                title=data.get("title", ""),
-                chapter_plan=data.get("chapter_plan", ""),
-                plot_direction=data.get("plot_direction", ""),
-                notes=data.get("notes", ""),
-            )
-            novel.outlines.append(out)
-            self.storage.save_novel(novel)
-            return jsonify(out.__dict__)
-
-    async def api_crud_outline_item(self, novel_id, item_id):
-        novel = self.storage.load_novel(novel_id)
-        if novel is None:
-            return jsonify({"error": "Novel not found"}), 404
-        data = await request.get_json()
-        if data.get("_action") == "delete":
-            novel.outlines = [o for o in novel.outlines if o.id != item_id]
-            self.storage.save_novel(novel)
-            return jsonify({"success": True})
-        else:
-            for o in novel.outlines:
-                if o.id == item_id:
-                    for k, v in data.items():
-                        if hasattr(o, k) and k != "id" and k != "_action":
-                            setattr(o, k, v)
-                    self.storage.save_novel(novel)
-                    return jsonify(o.__dict__)
-            return jsonify({"error": "Outline not found"}), 404
-
-    async def api_crud_chapters(self, novel_id):
-        novel = self.storage.load_novel(novel_id)
-        if novel is None:
-            return jsonify({"error": "Novel not found"}), 404
-        if request.method == "GET":
-            return jsonify([ch.__dict__ for ch in novel.chapters])
-        elif request.method == "POST":
-            data = await request.get_json()
-            from .models import Chapter as ChapterModel
-
-            ch = ChapterModel(
-                number=data.get("number", len(novel.chapters) + 1),
-                title=data.get("title", ""),
-                content=data.get("content", ""),
-            )
-            novel.chapters.append(ch)
-            novel.chapters.sort(key=lambda x: x.number)
-            self.storage.save_novel(novel)
-            return jsonify(ch.__dict__)
-
-    async def api_crud_chapter_item(self, novel_id, item_id):
-        novel = self.storage.load_novel(novel_id)
-        if novel is None:
-            return jsonify({"error": "Novel not found"}), 404
-        data = await request.get_json()
-        if data.get("_action") == "delete":
-            novel.chapters = [ch for ch in novel.chapters if ch.id != item_id]
-            self.storage.save_novel(novel)
-            return jsonify({"success": True})
-        else:
-            for ch in novel.chapters:
-                if ch.id == item_id:
-                    for k, v in data.items():
-                        if hasattr(ch, k) and k != "id" and k != "_action":
-                            setattr(ch, k, v)
-                    novel.chapters.sort(key=lambda x: x.number)
-                    self.storage.save_novel(novel)
-                    return jsonify(ch.__dict__)
-            return jsonify({"error": "Chapter not found"}), 404
+        return handler

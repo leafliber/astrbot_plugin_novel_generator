@@ -1,13 +1,20 @@
 const bridge = window.AstrBotPluginPage;
-const PLUGIN_NAME = "astrbot_plugin_novel_generator";
 
 let currentNovelId = null;
 let currentNovelData = null;
+let isLoading = false;
 
 async function init() {
   await bridge.ready();
   loadNovelList();
   bindEvents();
+}
+
+function escapeHtml(str) {
+  if (str == null) return "";
+  const div = document.createElement("div");
+  div.textContent = String(str);
+  return div.innerHTML;
 }
 
 function bindEvents() {
@@ -27,8 +34,39 @@ function bindEvents() {
   });
 }
 
+function setLoading(loading) {
+  isLoading = loading;
+  document.querySelectorAll(".add-btn, .edit-btn, .delete-btn").forEach((btn) => {
+    btn.disabled = loading;
+  });
+}
+
+function showError(message) {
+  const existing = document.querySelector(".error-toast");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.className = "error-toast";
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 4000);
+}
+
+async function safeApiCall(fn) {
+  if (isLoading) return;
+  setLoading(true);
+  try {
+    return await fn();
+  } catch (err) {
+    showError(`请求失败：${err.message || "未知错误"}`);
+    return null;
+  } finally {
+    setLoading(false);
+  }
+}
+
 async function loadNovelList() {
-  const novels = await bridge.apiGet("novels");
+  const novels = await safeApiCall(() => bridge.apiGet("novels"));
+  if (novels === null) return;
   const container = document.getElementById("novel-list");
   if (!novels || novels.length === 0) {
     container.innerHTML = '<p class="empty">暂无小说</p>';
@@ -37,10 +75,10 @@ async function loadNovelList() {
   container.innerHTML = novels
     .map(
       (n) => `
-      <div class="novel-card" data-id="${n.id}">
-        <h3>${n.name}</h3>
-        <p>章节：${n.chapter_count} | 角色：${n.character_count}</p>
-        <p class="meta">更新：${n.updated_at}</p>
+      <div class="novel-card" data-id="${escapeHtml(n.id)}">
+        <h3>${escapeHtml(n.name)}</h3>
+        <p>章节：${escapeHtml(String(n.chapter_count))} | 角色：${escapeHtml(String(n.character_count))}</p>
+        <p class="meta">更新：${escapeHtml(n.updated_at)}</p>
       </div>`
     )
     .join("");
@@ -52,9 +90,10 @@ async function loadNovelList() {
 }
 
 async function loadNovelDetail(novelId) {
+  const data = await safeApiCall(() => bridge.apiGet(`novels/${novelId}`));
+  if (!data) return;
   currentNovelId = novelId;
-  currentNovelData = await bridge.apiGet(`novels/${novelId}`);
-  if (!currentNovelData) return;
+  currentNovelData = data;
   document.getElementById("novel-title").textContent = currentNovelData.name;
   document.getElementById("novel-list-section").style.display = "none";
   document.getElementById("novel-detail-section").style.display = "block";
@@ -77,18 +116,18 @@ function renderCharacters() {
         (c) => `
         <div class="item-card">
           <div class="item-header">
-            <strong>${c.name}</strong>
-            <span class="item-id">ID: ${c.id}</span>
+            <strong>${escapeHtml(c.name)}</strong>
+            <span class="item-id">ID: ${escapeHtml(c.id)}</span>
           </div>
           <div class="item-body">
-            ${c.personality ? `<p><b>性格：</b>${c.personality}</p>` : ""}
-            ${c.appearance ? `<p><b>外貌：</b>${c.appearance}</p>` : ""}
-            ${c.background ? `<p><b>背景：</b>${c.background}</p>` : ""}
-            ${c.notes ? `<p><b>备注：</b>${c.notes}</p>` : ""}
+            ${c.personality ? `<p><b>性格：</b>${escapeHtml(c.personality)}</p>` : ""}
+            ${c.appearance ? `<p><b>外貌：</b>${escapeHtml(c.appearance)}</p>` : ""}
+            ${c.background ? `<p><b>背景：</b>${escapeHtml(c.background)}</p>` : ""}
+            ${c.notes ? `<p><b>备注：</b>${escapeHtml(c.notes)}</p>` : ""}
           </div>
           <div class="item-actions">
-            <button class="edit-btn" data-type="character" data-id="${c.id}">编辑</button>
-            <button class="delete-btn" data-type="character" data-id="${c.id}">删除</button>
+            <button class="edit-btn" data-type="character" data-id="${escapeHtml(c.id)}">编辑</button>
+            <button class="delete-btn" data-type="character" data-id="${escapeHtml(c.id)}">删除</button>
           </div>
         </div>`
       )
@@ -110,16 +149,16 @@ function renderRelationships() {
         (r) => `
         <div class="item-card">
           <div class="item-header">
-            <strong>${r.character_a} ↔ ${r.character_b}</strong>
-            <span class="item-id">ID: ${r.id}</span>
+            <strong>${escapeHtml(r.character_a)} ↔ ${escapeHtml(r.character_b)}</strong>
+            <span class="item-id">ID: ${escapeHtml(r.id)}</span>
           </div>
           <div class="item-body">
-            <p><b>类型：</b>${r.relation_type || "未指定"}</p>
-            ${r.description ? `<p><b>描述：</b>${r.description}</p>` : ""}
+            <p><b>类型：</b>${escapeHtml(r.relation_type || "未指定")}</p>
+            ${r.description ? `<p><b>描述：</b>${escapeHtml(r.description)}</p>` : ""}
           </div>
           <div class="item-actions">
-            <button class="edit-btn" data-type="relationship" data-id="${r.id}">编辑</button>
-            <button class="delete-btn" data-type="relationship" data-id="${r.id}">删除</button>
+            <button class="edit-btn" data-type="relationship" data-id="${escapeHtml(r.id)}">编辑</button>
+            <button class="delete-btn" data-type="relationship" data-id="${escapeHtml(r.id)}">删除</button>
           </div>
         </div>`
       )
@@ -141,17 +180,17 @@ function renderEvents() {
         (e) => `
         <div class="item-card">
           <div class="item-header">
-            <strong>${e.name}</strong>
-            <span class="item-id">ID: ${e.id}</span>
+            <strong>${escapeHtml(e.name)}</strong>
+            <span class="item-id">ID: ${escapeHtml(e.id)}</span>
           </div>
           <div class="item-body">
-            <p><b>时间线：</b>${e.timeline_position || "未指定"}</p>
-            ${e.description ? `<p><b>描述：</b>${e.description}</p>` : ""}
-            ${e.involved_characters && e.involved_characters.length > 0 ? `<p><b>涉及角色：</b>${e.involved_characters.join(", ")}</p>` : ""}
+            <p><b>时间线：</b>${escapeHtml(e.timeline_position || "未指定")}</p>
+            ${e.description ? `<p><b>描述：</b>${escapeHtml(e.description)}</p>` : ""}
+            ${e.involved_characters && e.involved_characters.length > 0 ? `<p><b>涉及角色：</b>${escapeHtml(e.involved_characters.join(", "))}</p>` : ""}
           </div>
           <div class="item-actions">
-            <button class="edit-btn" data-type="event" data-id="${e.id}">编辑</button>
-            <button class="delete-btn" data-type="event" data-id="${e.id}">删除</button>
+            <button class="edit-btn" data-type="event" data-id="${escapeHtml(e.id)}">编辑</button>
+            <button class="delete-btn" data-type="event" data-id="${escapeHtml(e.id)}">删除</button>
           </div>
         </div>`
       )
@@ -173,17 +212,17 @@ function renderOutlines() {
         (o) => `
         <div class="item-card">
           <div class="item-header">
-            <strong>${o.title}</strong>
-            <span class="item-id">ID: ${o.id}</span>
+            <strong>${escapeHtml(o.title)}</strong>
+            <span class="item-id">ID: ${escapeHtml(o.id)}</span>
           </div>
           <div class="item-body">
-            ${o.chapter_plan ? `<p><b>章节规划：</b>${o.chapter_plan}</p>` : ""}
-            ${o.plot_direction ? `<p><b>情节走向：</b>${o.plot_direction}</p>` : ""}
-            ${o.notes ? `<p><b>备注：</b>${o.notes}</p>` : ""}
+            ${o.chapter_plan ? `<p><b>章节规划：</b>${escapeHtml(o.chapter_plan)}</p>` : ""}
+            ${o.plot_direction ? `<p><b>情节走向：</b>${escapeHtml(o.plot_direction)}</p>` : ""}
+            ${o.notes ? `<p><b>备注：</b>${escapeHtml(o.notes)}</p>` : ""}
           </div>
           <div class="item-actions">
-            <button class="edit-btn" data-type="outline" data-id="${o.id}">编辑</button>
-            <button class="delete-btn" data-type="outline" data-id="${o.id}">删除</button>
+            <button class="edit-btn" data-type="outline" data-id="${escapeHtml(o.id)}">编辑</button>
+            <button class="delete-btn" data-type="outline" data-id="${escapeHtml(o.id)}">删除</button>
           </div>
         </div>`
       )
@@ -205,15 +244,15 @@ function renderChapters() {
         (ch) => `
         <div class="item-card">
           <div class="item-header">
-            <strong>第${ch.number}章 ${ch.title}</strong>
-            <span class="item-id">ID: ${ch.id}</span>
+            <strong>第${escapeHtml(String(ch.number))}章 ${escapeHtml(ch.title)}</strong>
+            <span class="item-id">ID: ${escapeHtml(ch.id)}</span>
           </div>
           <div class="item-body">
-            <pre class="chapter-content">${ch.content || "（空）"}</pre>
+            <pre class="chapter-content">${escapeHtml(ch.content || "（空）")}</pre>
           </div>
           <div class="item-actions">
-            <button class="edit-btn" data-type="chapter" data-id="${ch.id}">编辑</button>
-            <button class="delete-btn" data-type="chapter" data-id="${ch.id}">删除</button>
+            <button class="edit-btn" data-type="chapter" data-id="${escapeHtml(ch.id)}">编辑</button>
+            <button class="delete-btn" data-type="chapter" data-id="${escapeHtml(ch.id)}">删除</button>
           </div>
         </div>`
       )
@@ -262,10 +301,11 @@ function buildForm(type, data = {}) {
     .map((f) => {
       const val = data[f.key] !== undefined ? data[f.key] : "";
       const displayVal = f.key === "involved_characters" && Array.isArray(val) ? val.join(", ") : val;
+      const safeVal = escapeHtml(String(displayVal));
       if (f.type === "textarea") {
-        return `<label>${f.label}<textarea name="${f.key}">${displayVal}</textarea></label>`;
+        return `<label>${f.label}<textarea name="${f.key}">${safeVal}</textarea></label>`;
       }
-      return `<label>${f.label}<input type="${f.type}" name="${f.key}" value="${displayVal}" /></label>`;
+      return `<label>${f.label}<input type="${f.type}" name="${f.key}" value="${safeVal}" /></label>`;
     })
     .join("");
 }
@@ -275,7 +315,7 @@ function showFormModal(title, formHtml, onSave) {
   modal.className = "modal-overlay";
   modal.innerHTML = `
     <div class="modal">
-      <h3>${title}</h3>
+      <h3>${escapeHtml(title)}</h3>
       <form id="modal-form">${formHtml}</form>
       <div class="modal-actions">
         <button id="modal-save">保存</button>
@@ -297,9 +337,11 @@ function showFormModal(title, formHtml, onSave) {
         body[k] = v;
       }
     });
-    await onSave(body);
-    modal.remove();
-    await loadNovelDetail(currentNovelId);
+    const result = await safeApiCall(() => onSave(body));
+    if (result !== null) {
+      modal.remove();
+      await loadNovelDetail(currentNovelId);
+    }
   });
 }
 
@@ -307,7 +349,7 @@ function bindCrudEvents(panel, type) {
   panel.querySelectorAll(".add-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       showFormModal(`添加${getTypeName(type)}`, buildForm(type), async (body) => {
-        await bridge.apiPost(`novels/${currentNovelId}/${type}s`, body);
+        return bridge.apiPost(`novels/${currentNovelId}/${type}s`, body);
       });
     });
   });
@@ -318,15 +360,19 @@ function bindCrudEvents(panel, type) {
       const item = items.find((i) => i.id === itemId);
       if (!item) return;
       showFormModal(`编辑${getTypeName(type)}`, buildForm(type, item), async (body) => {
-        await bridge.apiPost(`novels/${currentNovelId}/${type}s/${itemId}`, body);
+        return bridge.apiPost(`novels/${currentNovelId}/${type}s/${itemId}`, body);
       });
     });
   });
   panel.querySelectorAll(".delete-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       if (!confirm("确定删除？")) return;
-      await bridge.apiPost(`novels/${currentNovelId}/${type}s/${btn.dataset.id}`, { _action: "delete" });
-      await loadNovelDetail(currentNovelId);
+      const result = await safeApiCall(() =>
+        bridge.apiPost(`novels/${currentNovelId}/${type}s/${btn.dataset.id}`, { _action: "delete" })
+      );
+      if (result !== null) {
+        await loadNovelDetail(currentNovelId);
+      }
     });
   });
 }
