@@ -146,7 +146,7 @@ class NovelGeneratorPlugin(Star):
         self, event: AstrMessageEvent, novel: Novel, prompt: str, *, system_prompt: str | None = None
     ):
         umo = event.unified_msg_origin
-        prov_id = await self.context.get_current_chat_provider_id(umo=umo)
+        prov_id = self.config.get("provider_id", "") or await self.context.get_current_chat_provider_id(umo=umo)
         tools = ToolSet([t(storage=self.storage) for t in NOVEL_TOOLS])
         resolved_system_prompt = system_prompt if system_prompt is not None else self.config.get("novel_system_prompt", "")
         max_steps = self.config.get("max_agent_steps", 30)

@@ -33,6 +33,7 @@ git clone https://github.com/cassia/astrbot_plugin_novel_generator.git AstrBot/d
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
+| `provider_id` | 空 | 小说创作使用的模型提供商，留空则使用当前会话默认提供商 |
 | `max_agent_steps` | `30` | Agent 最大执行步骤数，控制单次创作中的最大执行步骤 |
 | `tool_call_timeout` | `60` | 工具调用超时时间（秒） |
 | `novel_system_prompt` | 内置提示词 | Agent 创作时使用的系统提示词，可根据需要自定义 |
