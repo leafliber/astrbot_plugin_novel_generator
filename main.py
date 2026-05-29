@@ -17,6 +17,7 @@ from .models import (
     Novel,
     Outline,
     Relationship,
+    WorldSetting,
 )
 from .storage import PLUGIN_NAME, NovelStorage
 from .tools import NOVEL_TOOLS
@@ -39,13 +40,18 @@ _CRUD_CONFIG: dict[str, dict[str, Any]] = {
     },
     "outlines": {
         "model": Outline,
-        "create_fields": ["title", "chapter_plan", "plot_direction", "notes"],
+        "create_fields": ["title", "chapter_plan", "plot_direction", "notes", "parent_id", "order"],
         "sort_after_create": False,
     },
     "chapters": {
         "model": Chapter,
-        "create_fields": ["number", "title", "content"],
+        "create_fields": ["number", "title", "content", "status", "summary"],
         "sort_after_create": True,
+    },
+    "world_settings": {
+        "model": WorldSetting,
+        "create_fields": ["category", "name", "description"],
+        "sort_after_create": False,
     },
 }
 
@@ -73,6 +79,10 @@ class NovelGeneratorPlugin(Star):
     async def novel_create(self, event: AstrMessageEvent, name: str):
         """创建一本新小说"""
         session_id = self._get_session_id(event)
+        existing = await self.storage.list_novels()
+        if any(n.name == name for n in existing):
+            yield event.plain_result(f"已存在名为「{name}」的小说，请使用其他名称。")
+            return
         novel = Novel(name=name)
         await self.storage.save_novel(novel)
         await self.storage.set_active_novel(session_id, novel.id)
@@ -198,13 +208,52 @@ class NovelGeneratorPlugin(Star):
 
     @staticmethod
     def _build_context_info(novel: Novel) -> str:
-        return (
-            f"当前小说：「{novel.name}」\n"
-            f"已有角色：{len(novel.characters)} 个\n"
-            f"已有章节：{len(novel.chapters)} 章\n"
-            f"已有事件：{len(novel.events)} 个\n"
-            f"已有大纲：{len(novel.outlines)} 条\n"
-        )
+        parts = [f"当前小说：「{novel.name}」"]
+
+        if novel.characters:
+            char_lines = []
+            for c in novel.characters:
+                char_lines.append(f"  • {c.name}(ID:{c.id}): {c.personality[:60] if c.personality else '无性格描述'}")
+            parts.append(f"角色（{len(novel.characters)}个）：\n" + "\n".join(char_lines))
+
+        if novel.relationships:
+            rel_lines = []
+            for r in novel.relationships:
+                name_a = novel.character_name_by_id(r.character_a)
+                name_b = novel.character_name_by_id(r.character_b)
+                rel_lines.append(f"  • {name_a} ↔ {name_b}({r.relation_type})")
+            parts.append(f"关系（{len(novel.relationships)}条）：\n" + "\n".join(rel_lines))
+
+        if novel.outlines:
+            out_lines = []
+            for o in novel.outlines:
+                out_lines.append(f"  • {o.title}: 走向={o.plot_direction[:60] if o.plot_direction else '无'}")
+            parts.append(f"大纲（{len(novel.outlines)}条）：\n" + "\n".join(out_lines))
+
+        if novel.world_settings:
+            ws_lines = []
+            for ws in novel.world_settings:
+                ws_lines.append(f"  • [{ws.category}] {ws.name}: {ws.description[:60] if ws.description else '无描述'}")
+            parts.append(f"世界观设定（{len(novel.world_settings)}条）：\n" + "\n".join(ws_lines))
+
+        if novel.events:
+            evt_lines = []
+            for e in novel.events:
+                char_names = [novel.character_name_by_id(c) for c in e.involved_characters]
+                chars = ", ".join(char_names) if char_names else "无"
+                evt_lines.append(f"  • {e.name}[{e.timeline_position}](涉及:{chars})")
+            parts.append(f"事件（{len(novel.events)}个）：\n" + "\n".join(evt_lines))
+
+        if novel.chapters:
+            ch_lines = []
+            for ch in novel.chapters:
+                preview = ch.content[:80] + "..." if len(ch.content) > 80 else ch.content
+                ch_lines.append(f"  第{ch.number}章 {ch.title}: {preview if preview else '（空）'}")
+            parts.append(f"章节（{len(novel.chapters)}章）：\n" + "\n".join(ch_lines))
+        else:
+            parts.append("章节：暂无")
+
+        return "\n".join(parts) + "\n"
 
     @novel.command("read")
     async def novel_read(self, event: AstrMessageEvent, chapter_number: int = 0):
@@ -230,6 +279,7 @@ class NovelGeneratorPlugin(Star):
             lines.append(f"关系：{len(novel.relationships)} 条")
             lines.append(f"事件：{len(novel.events)} 个")
             lines.append(f"大纲：{len(novel.outlines)} 条")
+            lines.append(f"世界观设定：{len(novel.world_settings)} 条")
             lines.append(f"章节：{len(novel.chapters)} 章")
             if novel.characters:
                 lines.append("\n角色列表：")
@@ -237,6 +287,10 @@ class NovelGeneratorPlugin(Star):
                     lines.append(
                         f"  • {c.name}: {c.personality[:30] if c.personality else '无描述'}"
                     )
+            if novel.world_settings:
+                lines.append("\n世界观设定：")
+                for ws in novel.world_settings:
+                    lines.append(f"  • [{ws.category}] {ws.name}")
             if novel.chapters:
                 lines.append("\n章节目录：")
                 for ch in novel.chapters:

@@ -203,10 +203,12 @@ class TestNovel:
             "name",
             "created_at",
             "updated_at",
+            "schema_version",
             "characters",
             "relationships",
             "events",
             "outlines",
             "chapters",
+            "world_settings",
         }
         assert set(d.keys()) == expected_keys

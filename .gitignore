@@ -8,3 +8,4 @@ dist/
 build/
 /data
 pyproject.toml
+uv.lock

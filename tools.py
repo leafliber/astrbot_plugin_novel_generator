@@ -10,7 +10,7 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
-from .models import Character, Chapter, Event, Outline, Relationship
+from .models import Character, Chapter, Event, Outline, Relationship, WorldSetting
 from .storage import NovelStorage
 
 
@@ -172,15 +172,25 @@ class RelationshipTool(FunctionTool[AstrAgentContext]):
             return "错误：当前没有激活的小说。"
         action = kwargs.get("action", "")
         if action == "create":
+            raw_a = kwargs.get("character_a", "")
+            raw_b = kwargs.get("character_b", "")
+            id_a = novel.resolve_character_id(raw_a)
+            id_b = novel.resolve_character_id(raw_b)
+            if not id_a:
+                return f"错误：未找到角色「{raw_a}」，请先创建该角色或使用正确的ID。"
+            if not id_b:
+                return f"错误：未找到角色「{raw_b}」，请先创建该角色或使用正确的ID。"
             rel = Relationship(
-                character_a=kwargs.get("character_a", ""),
-                character_b=kwargs.get("character_b", ""),
+                character_a=id_a,
+                character_b=id_b,
                 relation_type=kwargs.get("relation_type", ""),
                 description=kwargs.get("description", ""),
             )
             novel.relationships.append(rel)
             await storage.save_novel(novel)
-            return f"关系已创建，ID: {rel.id}"
+            name_a = novel.character_name_by_id(id_a)
+            name_b = novel.character_name_by_id(id_b)
+            return f"关系已创建：{name_a} ↔ {name_b}，ID: {rel.id}"
         elif action == "query":
             rid = kwargs.get("relationship_id", "")
             for r in novel.relationships:
@@ -188,8 +198,10 @@ class RelationshipTool(FunctionTool[AstrAgentContext]):
                     return json.dumps(
                         {
                             "id": r.id,
-                            "character_a": r.character_a,
-                            "character_b": r.character_b,
+                            "character_a": novel.character_name_by_id(r.character_a),
+                            "character_a_id": r.character_a,
+                            "character_b": novel.character_name_by_id(r.character_b),
+                            "character_b_id": r.character_b,
                             "relation_type": r.relation_type,
                             "description": r.description,
                         },
@@ -200,7 +212,21 @@ class RelationshipTool(FunctionTool[AstrAgentContext]):
             rid = kwargs.get("relationship_id", "")
             for r in novel.relationships:
                 if r.id == rid:
-                    r.apply_updates(kwargs)
+                    resolved = {}
+                    if "character_a" in kwargs:
+                        id_a = novel.resolve_character_id(kwargs["character_a"])
+                        if not id_a:
+                            return f"错误：未找到角色「{kwargs['character_a']}」。"
+                        resolved["character_a"] = id_a
+                    if "character_b" in kwargs:
+                        id_b = novel.resolve_character_id(kwargs["character_b"])
+                        if not id_b:
+                            return f"错误：未找到角色「{kwargs['character_b']}」。"
+                        resolved["character_b"] = id_b
+                    for k in ("relation_type", "description"):
+                        if k in kwargs:
+                            resolved[k] = kwargs[k]
+                    r.apply_updates(resolved)
                     await storage.save_novel(novel)
                     return "关系已更新"
             return f"未找到ID为 {rid} 的关系"
@@ -217,8 +243,10 @@ class RelationshipTool(FunctionTool[AstrAgentContext]):
                 return "暂无角色关系"
             result = []
             for r in novel.relationships:
+                name_a = novel.character_name_by_id(r.character_a)
+                name_b = novel.character_name_by_id(r.character_b)
                 result.append(
-                    f"- {r.character_a} ↔ {r.character_b}({r.relation_type}): {r.description[:50] if r.description else '无描述'}"
+                    f"- {name_a} ↔ {name_b}({r.relation_type}): {r.description[:50] if r.description else '无描述'}"
                 )
             return "\n".join(result)
         return "未知操作"
@@ -275,11 +303,22 @@ class EventTool(FunctionTool[AstrAgentContext]):
             return "错误：当前没有激活的小说。"
         action = kwargs.get("action", "")
         if action == "create":
+            raw_chars = kwargs.get("involved_characters", [])
+            resolved_chars = []
+            unresolved = []
+            for ref in raw_chars:
+                cid = novel.resolve_character_id(ref)
+                if cid:
+                    resolved_chars.append(cid)
+                else:
+                    unresolved.append(ref)
+            if unresolved:
+                return f"错误：未找到角色：{', '.join(unresolved)}，请先创建或使用正确的ID。"
             evt = Event(
                 name=kwargs.get("name", ""),
                 timeline_position=kwargs.get("timeline_position", ""),
                 description=kwargs.get("description", ""),
-                involved_characters=kwargs.get("involved_characters", []),
+                involved_characters=resolved_chars,
             )
             novel.events.append(evt)
             await storage.save_novel(novel)
@@ -288,13 +327,15 @@ class EventTool(FunctionTool[AstrAgentContext]):
             eid = kwargs.get("event_id", "")
             for e in novel.events:
                 if e.id == eid:
+                    char_names = [novel.character_name_by_id(c) for c in e.involved_characters]
                     return json.dumps(
                         {
                             "id": e.id,
                             "name": e.name,
                             "timeline_position": e.timeline_position,
                             "description": e.description,
-                            "involved_characters": e.involved_characters,
+                            "involved_characters": char_names,
+                            "involved_character_ids": e.involved_characters,
                         },
                         ensure_ascii=False,
                     )
@@ -303,7 +344,23 @@ class EventTool(FunctionTool[AstrAgentContext]):
             eid = kwargs.get("event_id", "")
             for e in novel.events:
                 if e.id == eid:
-                    e.apply_updates(kwargs)
+                    resolved = {}
+                    for k in ("name", "timeline_position", "description"):
+                        if k in kwargs:
+                            resolved[k] = kwargs[k]
+                    if "involved_characters" in kwargs:
+                        resolved_chars = []
+                        unresolved = []
+                        for ref in kwargs["involved_characters"]:
+                            cid = novel.resolve_character_id(ref)
+                            if cid:
+                                resolved_chars.append(cid)
+                            else:
+                                unresolved.append(ref)
+                        if unresolved:
+                            return f"错误：未找到角色：{', '.join(unresolved)}。"
+                        resolved["involved_characters"] = resolved_chars
+                    e.apply_updates(resolved)
                     await storage.save_novel(novel)
                     return f"事件「{e.name}」已更新"
             return f"未找到ID为 {eid} 的事件"
@@ -320,9 +377,8 @@ class EventTool(FunctionTool[AstrAgentContext]):
                 return "暂无事件"
             result = []
             for e in novel.events:
-                chars = (
-                    ", ".join(e.involved_characters) if e.involved_characters else "无"
-                )
+                char_names = [novel.character_name_by_id(c) for c in e.involved_characters]
+                chars = ", ".join(char_names) if char_names else "无"
                 result.append(
                     f"- {e.name}(ID:{e.id}) [{e.timeline_position}]: {e.description[:50] if e.description else '无描述'} (涉及: {chars})"
                 )
@@ -363,6 +419,14 @@ class OutlineTool(FunctionTool[AstrAgentContext]):
                     "type": "string",
                     "description": "备注，create/update时使用",
                 },
+                "parent_id": {
+                    "type": "string",
+                    "description": "父大纲ID，用于构建层级关系，留空表示顶层大纲，create/update时使用",
+                },
+                "order": {
+                    "type": "integer",
+                    "description": "排序序号，数字越小越靠前，create/update时使用",
+                },
             },
             "required": ["action"],
         }
@@ -385,10 +449,14 @@ class OutlineTool(FunctionTool[AstrAgentContext]):
                 chapter_plan=kwargs.get("chapter_plan", ""),
                 plot_direction=kwargs.get("plot_direction", ""),
                 notes=kwargs.get("notes", ""),
+                parent_id=kwargs.get("parent_id", ""),
+                order=kwargs.get("order", len(novel.outlines) + 1),
             )
             novel.outlines.append(out)
+            novel.outlines.sort(key=lambda x: x.order)
             await storage.save_novel(novel)
-            return f"大纲「{out.title}」已创建，ID: {out.id}"
+            parent_info = f" (父: {out.parent_id})" if out.parent_id else ""
+            return f"大纲「{out.title}」已创建，ID: {out.id}{parent_info}"
         elif action == "query":
             oid = kwargs.get("outline_id", "")
             for o in novel.outlines:
@@ -400,6 +468,8 @@ class OutlineTool(FunctionTool[AstrAgentContext]):
                             "chapter_plan": o.chapter_plan,
                             "plot_direction": o.plot_direction,
                             "notes": o.notes,
+                            "parent_id": o.parent_id,
+                            "order": o.order,
                         },
                         ensure_ascii=False,
                     )
@@ -423,11 +493,22 @@ class OutlineTool(FunctionTool[AstrAgentContext]):
         elif action == "list":
             if not novel.outlines:
                 return "暂无剧情大纲"
-            result = []
+            novel.outlines.sort(key=lambda x: x.order)
+            by_parent: dict[str, list] = {}
             for o in novel.outlines:
-                result.append(
-                    f"- {o.title}(ID:{o.id}): 规划={o.chapter_plan[:50] if o.chapter_plan else '无'} | 走向={o.plot_direction[:50] if o.plot_direction else '无'}"
-                )
+                by_parent.setdefault(o.parent_id, []).append(o)
+            result = []
+
+            def _render_tree(parent_id: str, indent: int = 0):
+                children = by_parent.get(parent_id, [])
+                for o in children:
+                    prefix = "  " * indent + ("└ " if indent > 0 else "- ")
+                    result.append(
+                        f"{prefix}{o.title}(ID:{o.id}): 规划={o.chapter_plan[:50] if o.chapter_plan else '无'} | 走向={o.plot_direction[:50] if o.plot_direction else '无'}"
+                    )
+                    _render_tree(o.id, indent + 1)
+
+            _render_tree("")
             return "\n".join(result)
         return "未知操作"
 
@@ -463,6 +544,15 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
                     "type": "string",
                     "description": "章节正文内容，create/update时使用",
                 },
+                "status": {
+                    "type": "string",
+                    "description": "章节状态：draft(草稿), review(审核中), final(定稿)，create/update时使用",
+                    "enum": ["draft", "review", "final"],
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "章节摘要，create/update时使用",
+                },
             },
             "required": ["action"],
         }
@@ -480,10 +570,16 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
             return "错误：当前没有激活的小说。"
         action = kwargs.get("action", "")
         if action == "create":
+            ch_number = kwargs.get("number", len(novel.chapters) + 1)
+            existing_numbers = {ch.number for ch in novel.chapters}
+            if ch_number in existing_numbers:
+                return f"错误：第{ch_number}章已存在，请使用其他章节号或省略number让系统自动分配。"
             ch = Chapter(
-                number=kwargs.get("number", len(novel.chapters) + 1),
+                number=ch_number,
                 title=kwargs.get("title", ""),
                 content=kwargs.get("content", ""),
+                status=kwargs.get("status", "draft"),
+                summary=kwargs.get("summary", ""),
             )
             novel.chapters.append(ch)
             novel.chapters.sort(key=lambda x: x.number)
@@ -499,6 +595,8 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
                             "number": ch.number,
                             "title": ch.title,
                             "content": ch.content,
+                            "status": ch.status,
+                            "summary": ch.summary,
                         },
                         ensure_ascii=False,
                     )
@@ -517,14 +615,109 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
                 return "暂无章节"
             result = []
             for ch in novel.chapters:
-                content_preview = (
-                    ch.content[:50] + "..." if len(ch.content) > 50 else ch.content
-                )
+                status_label = {"draft": "草稿", "review": "审核中", "final": "定稿"}.get(ch.status, ch.status)
+                summary_info = f" | 摘要: {ch.summary[:40]}" if ch.summary else ""
                 result.append(
-                    f"- 第{ch.number}章 {ch.title}(ID:{ch.id}): {content_preview}"
+                    f"- 第{ch.number}章 {ch.title}(ID:{ch.id}) [{status_label}]{summary_info}"
                 )
             return "\n".join(result)
         return "未知操作"
 
 
-NOVEL_TOOLS = [CharacterTool, RelationshipTool, EventTool, OutlineTool, ChapterTool]
+@dataclass
+class WorldSettingTool(FunctionTool[AstrAgentContext]):
+    name: str = "manage_world_setting"
+    description: str = "管理小说的世界观设定。支持创建、查询、修改、删除世界观设定，包括时代背景、地理、魔法体系、社会结构等。"
+    parameters: dict = PydanticField(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "操作类型：create(创建), query(查询), update(修改), delete(删除), list(列出所有)",
+                    "enum": ["create", "query", "update", "delete", "list"],
+                },
+                "setting_id": {
+                    "type": "string",
+                    "description": "设定ID，query/update/delete时必填",
+                },
+                "category": {
+                    "type": "string",
+                    "description": "设定分类（如时代、地理、魔法体系、社会、种族等），create/update时使用",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "设定名称，create/update时使用",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "设定详细描述，create/update时使用",
+                },
+            },
+            "required": ["action"],
+        }
+    )
+    storage: Optional[NovelStorage] = field(default=None, repr=False)
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
+        storage = self.storage
+        if storage is None:
+            return "错误：存储未初始化。"
+        novel = await storage.get_active_novel(context.context.event.unified_msg_origin)
+        if novel is None:
+            return "错误：当前没有激活的小说。"
+        action = kwargs.get("action", "")
+        if action == "create":
+            ws = WorldSetting(
+                category=kwargs.get("category", ""),
+                name=kwargs.get("name", ""),
+                description=kwargs.get("description", ""),
+            )
+            novel.world_settings.append(ws)
+            await storage.save_novel(novel)
+            return f"世界观设定「{ws.name}」已创建，ID: {ws.id}"
+        elif action == "query":
+            sid = kwargs.get("setting_id", "")
+            for ws in novel.world_settings:
+                if ws.id == sid:
+                    return json.dumps(
+                        {
+                            "id": ws.id,
+                            "category": ws.category,
+                            "name": ws.name,
+                            "description": ws.description,
+                        },
+                        ensure_ascii=False,
+                    )
+            return f"未找到ID为 {sid} 的世界观设定"
+        elif action == "update":
+            sid = kwargs.get("setting_id", "")
+            for ws in novel.world_settings:
+                if ws.id == sid:
+                    ws.apply_updates(kwargs)
+                    await storage.save_novel(novel)
+                    return f"世界观设定「{ws.name}」已更新"
+            return f"未找到ID为 {sid} 的世界观设定"
+        elif action == "delete":
+            sid = kwargs.get("setting_id", "")
+            before = len(novel.world_settings)
+            novel.world_settings = [ws for ws in novel.world_settings if ws.id != sid]
+            if len(novel.world_settings) < before:
+                await storage.save_novel(novel)
+                return "世界观设定已删除"
+            return f"未找到ID为 {sid} 的世界观设定"
+        elif action == "list":
+            if not novel.world_settings:
+                return "暂无世界观设定"
+            result = []
+            for ws in novel.world_settings:
+                result.append(
+                    f"- [{ws.category}] {ws.name}(ID:{ws.id}): {ws.description[:80] if ws.description else '无描述'}"
+                )
+            return "\n".join(result)
+        return "未知操作"
+
+
+NOVEL_TOOLS = [CharacterTool, RelationshipTool, EventTool, OutlineTool, ChapterTool, WorldSettingTool]

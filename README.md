@@ -1,17 +1,17 @@
-# 📖 AstrBot 小说创作器
+# AstrBot 小说创作器
 
 **基于 AstrBot Agent 的小说创作与管理插件 | 结构化数据管理 | Web 管理面板**
 
-## ✨ 功能特色
+## 功能特色
 
-- 🤖 **Agent 驱动创作** - 通过 AstrBot 的 `tool_loop_agent` 调用 LLM，自动使用工具管理角色、关系、事件、大纲和章节
-- 🧩 **5 大内部工具** - 角色画像、角色关系、事件管理、剧情大纲、章节管理，Agent 可自主调用完成结构化创作
-- 📚 **完整指令组** - 统一的 `/novel` 指令组，涵盖创建、切换、写作、修正、阅读、提问、章节列表、停止等全流程
-- 🔒 **群聊互斥激活** - 每个群聊同时只能激活一本小说，避免创作混乱
-- 💾 **轻量存储** - JSON 文件存储小说数据，KV 存储管理激活状态，无需额外数据库
-- 🌐 **Web 管理面板** - 基于 AstrBot Plugin Pages 的可视化面板，内嵌于 Dashboard，支持所有数据的增删改查
+- **Agent 驱动创作** - 通过 AstrBot 的 `tool_loop_agent` 调用 LLM，自动使用工具管理角色、关系、事件、大纲、章节和世界观设定
+- **6 大内部工具** - 角色画像、角色关系、事件管理、剧情大纲、章节管理、世界观设定，Agent 可自主调用完成结构化创作
+- **完整指令组** - 统一的 `/novel` 指令组，涵盖创建、切换、写作、修正、阅读、提问、章节列表、停止等全流程
+- **群聊互斥激活** - 每个群聊同时只能激活一本小说，避免创作混乱
+- **安全存储** - 原子写入防止崩溃损坏，并发锁防止数据竞争，章节内容独立存储，索引文件加速列表查询
+- **Web 管理面板** - 基于 AstrBot Plugin Pages 的可视化面板，内嵌于 Dashboard，支持所有数据的增删改查
 
-## 📦 安装
+## 安装
 
 ### 方式一：插件市场
 
@@ -27,7 +27,7 @@ git clone https://github.com/cassia/astrbot_plugin_novel_generator.git AstrBot/d
 
 然后在 AstrBot WebUI 的「插件管理」页面点击「重载插件」
 
-## 🎛️ 配置项
+## 配置项
 
 在 AstrBot WebUI 的插件配置页面可调整以下选项：
 
@@ -37,7 +37,7 @@ git clone https://github.com/cassia/astrbot_plugin_novel_generator.git AstrBot/d
 | `tool_call_timeout` | `60` | 工具调用超时时间（秒） |
 | `novel_system_prompt` | 内置提示词 | Agent 创作时使用的系统提示词，可根据需要自定义 |
 
-## 📱 指令使用
+## 指令使用
 
 所有指令通过 `/novel` 指令组统一管理：
 
@@ -63,25 +63,26 @@ git clone https://github.com/cassia/astrbot_plugin_novel_generator.git AstrBot/d
 
 | 指令 | 说明 | 示例 |
 |---|---|---|
-| `/novel read` | 阅读小说概览（角色、章节目录等） | `/novel read` |
+| `/novel read` | 阅读小说概览（角色、世界观、章节目录等） | `/novel read` |
 | `/novel read <章节号>` | 阅读指定章节内容 | `/novel read 3` |
-| `/novel chapters` | 列出所有章节及字数 | `/novel chapters` |
+| `/novel chapters` | 列出所有章节及状态 | `/novel chapters` |
 
-## 🧩 Agent 内部工具
+## Agent 内部工具
 
-插件为 Agent 提供 5 个内部工具，Agent 在创作过程中可自主调用：
+插件为 Agent 提供 6 个内部工具，Agent 在创作过程中可自主调用：
 
 | 工具 | 名称 | 支持的操作 | 说明 |
 |---|---|---|---|
 | 角色画像 | `manage_character` | create / query / update / delete / list | 管理角色的姓名、性格、外貌、背景、备注 |
-| 角色关系 | `manage_relationship` | create / query / update / delete / list | 管理角色间的关系类型和描述 |
-| 事件管理 | `manage_event` | create / query / update / delete / list | 管理事件名、时间线位置、描述、涉及角色 |
-| 剧情大纲 | `manage_outline` | create / query / update / delete / list | 管理大纲标题、章节规划、情节走向、备注 |
-| 章节管理 | `manage_chapter` | create / query / update / list | 管理章节号、标题、正文内容 |
+| 角色关系 | `manage_relationship` | create / query / update / delete / list | 管理角色间的关系类型和描述，角色以 ID 引用 |
+| 事件管理 | `manage_event` | create / query / update / delete / list | 管理事件名、时间线位置、描述、涉及角色（ID 引用） |
+| 剧情大纲 | `manage_outline` | create / query / update / delete / list | 管理大纲标题、章节规划、情节走向、备注、层级关系、排序 |
+| 章节管理 | `manage_chapter` | create / query / update / list | 管理章节号、标题、正文内容、状态、摘要 |
+| 世界观设定 | `manage_world_setting` | create / query / update / delete / list | 管理世界观分类、名称、描述（时代、地理、魔法体系、社会结构等） |
 
 > 这些工具仅在 `/novel write`、`/novel revise`、`/novel ask` 指令触发 Agent 时可用，不会暴露给 AstrBot 全局。
 
-## 🌐 Web 管理面板
+## Web 管理面板
 
 在 AstrBot Dashboard 的插件页面中可直接访问管理界面，支持：
 
@@ -89,21 +90,29 @@ git clone https://github.com/cassia/astrbot_plugin_novel_generator.git AstrBot/d
 - 角色画像的增删改查
 - 角色关系的管理
 - 事件的创建与编辑
-- 剧情大纲的维护
-- 章节内容的查看与编辑
+- 剧情大纲的维护（含层级和排序）
+- 章节内容的查看与编辑（含状态和摘要）
+- 世界观设定的管理
 
-## 📊 数据存储
+## 数据存储
 
-### 小说数据
-
-每本小说以独立 JSON 文件存储：
+### 存储架构
 
 ```
 data/plugin_data/astrbot_plugin_novel_generator/novels/
-├── a1b2c3d4e5f6.json
-├── f7e8d9c0b1a2.json
-└── ...
+├── _index.json                    # 小说元数据索引（加速列表查询）
+├── a1b2c3d4e5f6.json              # 小说主数据（不含章节正文）
+├── a1b2c3d4e5f6/                  # 章节内容目录
+│   ├── ch1234567.txt              # 章节正文（独立存储）
+│   └── ch7654321.txt
+└── f7e8d9c0b1a2.json
 ```
+
+### 安全机制
+
+- **原子写入** - 通过临时文件 + `os.replace` 原子替换，防止写入过程中崩溃导致文件损坏
+- **并发锁** - 每本小说独立的 `asyncio.Lock`，防止并发写入导致数据竞争
+- **索引文件** - 维护 `_index.json` 元数据索引，列表查询无需加载完整小说数据
 
 ### 激活状态
 
@@ -123,6 +132,7 @@ active_novel:<session_id> → <novel_id>
   "name": "星际迷途",
   "created_at": "2025-01-01T00:00:00",
   "updated_at": "2025-01-02T12:00:00",
+  "schema_version": 1,
   "characters": [
     {
       "id": "abc12345",
@@ -136,8 +146,8 @@ active_novel:<session_id> → <novel_id>
   "relationships": [
     {
       "id": "rel12345",
-      "character_a": "林远",
-      "character_b": "苏晴",
+      "character_a": "abc12345",
+      "character_b": "def67890",
       "relation_type": "搭档",
       "description": "生死与共的战友"
     }
@@ -148,7 +158,7 @@ active_novel:<session_id> → <novel_id>
       "name": "信号事件",
       "timeline_position": "第一章",
       "description": "收到来自深空的神秘信号",
-      "involved_characters": ["林远", "苏晴"]
+      "involved_characters": ["abc12345", "def67890"]
     }
   ],
   "outlines": [
@@ -157,7 +167,9 @@ active_novel:<session_id> → <novel_id>
       "title": "主线大纲",
       "chapter_plan": "1-5章：发现信号；6-10章：深入调查",
       "plot_direction": "从悬疑走向冒险",
-      "notes": "注意伏笔回收"
+      "notes": "注意伏笔回收",
+      "parent_id": "",
+      "order": 1
     }
   ],
   "chapters": [
@@ -165,13 +177,53 @@ active_novel:<session_id> → <novel_id>
       "id": "ch1234567",
       "number": 1,
       "title": "信号",
-      "content": "夜幕降临，基地的通讯阵列突然..."
+      "content": "",
+      "status": "draft",
+      "summary": "林远在基地收到神秘信号"
+    }
+  ],
+  "world_settings": [
+    {
+      "id": "ws123456",
+      "category": "时代",
+      "name": "星际殖民时代",
+      "description": "人类已进入星际殖民时代，多个星球建立了殖民地"
     }
   ]
 }
 ```
 
-## 🔗 Web API 列表
+> 章节的 `content` 字段在 JSON 中为空字符串，实际正文存储在独立的 `.txt` 文件中。
+
+### 角色引用机制
+
+关系和事件中的角色统一使用 **ID 引用**（而非姓名），确保角色改名后引用不会失效：
+
+- `Relationship.character_a` / `character_b` → 存储角色 ID
+- `Event.involved_characters` → 存储角色 ID 列表
+- 展示时通过 `Novel.character_name_by_id()` 解析为姓名
+- 创建/更新时支持传入姓名或 ID，自动解析为 ID 存储
+
+### 章节状态
+
+章节支持三种状态：
+
+| 状态 | 值 | 说明 |
+|---|---|---|
+| 草稿 | `draft` | 默认状态，初始创作 |
+| 审核中 | `review` | 内容待审核 |
+| 定稿 | `final` | 内容已确认 |
+
+### 大纲层级
+
+大纲支持树形层级结构：
+
+- `parent_id` 为空表示顶层大纲
+- `parent_id` 指向父大纲的 ID 表示子大纲
+- `order` 字段控制排序，数字越小越靠前
+- list 操作以缩进树形展示层级关系
+
+## Web API 列表
 
 插件注册了以下 Web API 端点（前缀 `/astrbot_plugin_novel_generator/`）：
 
@@ -189,17 +241,19 @@ active_novel:<session_id> → <novel_id>
 | `novels/{novel_id}/outlines/{item_id}` | POST | 大纲更新 / 删除 |
 | `novels/{novel_id}/chapters` | GET / POST | 章节列表 / 新增章节 |
 | `novels/{novel_id}/chapters/{item_id}` | POST | 章节更新 / 删除 |
+| `novels/{novel_id}/world_settings` | GET / POST | 世界观设定列表 / 新增设定 |
+| `novels/{novel_id}/world_settings/{item_id}` | POST | 世界观设定更新 / 删除 |
 
 > 由于 AstrBot Bridge API 仅支持 `apiGet` 和 `apiPost`，更新和删除操作均通过 POST 方法，请求体中的 `_action` 字段（`update` 或 `delete`）区分操作类型。
 
-## 🏗️ 项目结构
+## 项目结构
 
 ```
 astrbot_plugin_novel_generator/
 ├── main.py              # 插件主入口，指令注册与 Web API
-├── models.py            # 数据模型定义（Novel, Character 等）
-├── storage.py           # 存储层（JSON 文件读写 + KV 存储）
-├── tools.py             # Agent 内部工具定义（5 个 FunctionTool）
+├── models.py            # 数据模型定义（Novel, Character, WorldSetting 等）
+├── storage.py           # 存储层（原子写入 + 并发锁 + 索引 + 章节独立存储）
+├── tools.py             # Agent 内部工具定义（6 个 FunctionTool）
 ├── pages/
 │   └── novel-manager/   # Web 管理面板前端
 │       ├── index.html
@@ -211,7 +265,7 @@ astrbot_plugin_novel_generator/
 └── requirements.txt     # 依赖列表
 ```
 
-## 🛠️ 开发
+## 开发
 
 ### 本地调试
 
@@ -222,24 +276,15 @@ astrbot_plugin_novel_generator/
 ### 运行测试
 
 ```bash
-# 创建虚拟环境
-python -m venv .venv
-source .venv/bin/activate
-
-# 安装依赖
-pip install pytest pytest-asyncio pydantic quart astrbot
-
-# 运行测试
-python -m pytest tests/ -v
+uv run pytest tests/test_models.py -v
 ```
 
 ### 代码检查
 
 ```bash
-pip install ruff
-ruff check .
+uv run ruff check .
 ```
 
-## 📄 许可证
+## 许可证
 
 [GPL-3.0](LICENSE)
