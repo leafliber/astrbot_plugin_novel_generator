@@ -105,6 +105,14 @@ class CharacterTool(FunctionTool[AstrAgentContext]):
             before = len(novel.characters)
             novel.characters = [c for c in novel.characters if c.id != cid]
             if len(novel.characters) < before:
+                novel.relationships = [
+                    r for r in novel.relationships
+                    if r.character_a != cid and r.character_b != cid
+                ]
+                for e in novel.events:
+                    e.involved_characters = [
+                        c for c in e.involved_characters if c != cid
+                    ]
                 await storage.save_novel(novel)
                 return "角色已删除"
             return f"未找到ID为 {cid} 的角色"
@@ -244,7 +252,7 @@ class RelationshipTool(FunctionTool[AstrAgentContext]):
                 name_a = novel.character_name_by_id(r.character_a)
                 name_b = novel.character_name_by_id(r.character_b)
                 result.append(
-                    f"- {name_a} ↔ {name_b}({r.relation_type}): {r.description[:50] if r.description else '无描述'}"
+                    f"- {name_a} ↔ {name_b}(ID:{r.id}) [{r.relation_type}]: {r.description[:50] if r.description else '无描述'}"
                 )
             return "\n".join(result)
         return "未知操作"
@@ -516,6 +524,9 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_chapter"
     description: str = (
         "管理小说的章节内容。支持创建、查询、修改章节，包括章节号、标题和正文内容。"
+        "重要：章节正文可能很长，请使用以下策略：1) 先用create创建章节（content留空或只写开头），"
+        "2) 然后多次使用append_content分段追加正文内容，每次追加一段（约500-1000字），"
+        "3) 使用update修改标题、状态、摘要等元数据。切勿在单次调用中传入完整长文。"
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -523,12 +534,12 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "操作类型：create(创建), query(查询), update(修改), list(列出所有)",
-                    "enum": ["create", "query", "update", "list"],
+                    "description": "操作类型：create(创建), query(查询), update(修改), delete(删除), list(列出所有), append_content(追加正文内容到指定章节)",
+                    "enum": ["create", "query", "update", "delete", "list", "append_content"],
                 },
                 "chapter_id": {
                     "type": "string",
-                    "description": "章节ID，query/update时必填",
+                    "description": "章节ID，query/update/delete/append_content时必填",
                 },
                 "number": {
                     "type": "integer",
@@ -540,7 +551,7 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
                 },
                 "content": {
                     "type": "string",
-                    "description": "章节正文内容，create/update时使用",
+                    "description": "章节正文内容，create时使用（建议仅写入开头，后续用append_content追加）",
                 },
                 "status": {
                     "type": "string",
@@ -550,6 +561,10 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
                 "summary": {
                     "type": "string",
                     "description": "章节摘要，create/update时使用",
+                },
+                "append_text": {
+                    "type": "string",
+                    "description": "要追加到章节末尾的正文内容（约500-1000字），append_content时必填",
                 },
             },
             "required": ["action"],
@@ -603,10 +618,34 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
             cid = kwargs.get("chapter_id", "")
             for ch in novel.chapters:
                 if ch.id == cid:
-                    ch.apply_updates(kwargs)
+                    update_data = {k: v for k, v in kwargs.items() if k != "content"}
+                    ch.apply_updates(update_data)
                     novel.chapters.sort(key=lambda x: x.number)
                     await storage.save_novel(novel)
                     return f"第{ch.number}章「{ch.title}」已更新"
+            return f"未找到ID为 {cid} 的章节"
+        elif action == "delete":
+            cid = kwargs.get("chapter_id", "")
+            before = len(novel.chapters)
+            novel.chapters = [ch for ch in novel.chapters if ch.id != cid]
+            if len(novel.chapters) < before:
+                await storage.save_novel(novel)
+                return "章节已删除"
+            return f"未找到ID为 {cid} 的章节"
+        elif action == "append_content":
+            cid = kwargs.get("chapter_id", "")
+            append_text = kwargs.get("append_text", "")
+            if not append_text:
+                return "错误：append_text不能为空。"
+            for ch in novel.chapters:
+                if ch.id == cid:
+                    if ch.content:
+                        ch.content += "\n" + append_text
+                    else:
+                        ch.content = append_text
+                    await storage.save_novel(novel)
+                    content_len = len(ch.content)
+                    return f"第{ch.number}章「{ch.title}」已追加内容，当前总字数：{content_len}"
             return f"未找到ID为 {cid} 的章节"
         elif action == "list":
             if not novel.chapters:

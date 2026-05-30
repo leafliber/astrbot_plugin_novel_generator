@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,8 @@ from astrbot.api.star import Context, Star
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from quart import jsonify, request
+
+import astrbot.api.message_components as Comp
 
 from .models import (
     Character,
@@ -142,13 +145,41 @@ class NovelGeneratorPlugin(Star):
         await self.storage.delete_novel(target.id)
         yield event.plain_result(f"小说「{name}」已删除。")
 
+    _SYSTEM_PROMPT = """\
+你是一位专业的小说创作助手，负责使用工具来管理和创作小说的结构化数据。
+
+## 创作流程
+1. 收到创作要求后，先审视当前小说数据（角色、关系、大纲、世界观等），理解已有设定
+2. 按需创建或更新角色、关系、世界观设定、事件等基础数据
+3. 规划或更新剧情大纲，明确章节走向
+4. 按大纲创作当前章节正文
+
+## 章节正文写入（关键）
+章节正文较长，必须分段写入，否则会因参数长度限制导致内容丢失：
+- 用 manage_chapter 的 create 创建章节，content 留空或只写开头段落
+- 用 append_content 分段追加正文，每次约 500-1000 字
+- 用 update 修改标题、状态、摘要等元数据（update 不会修改 content）
+- 切勿在单次工具调用中传入完整长篇正文
+
+## 数据引用规则
+- 角色在关系和事件中以 ID 引用，创建角色后会返回 ID，list 也会显示 ID
+- 创建关系或事件时，角色参数可传姓名或 ID，系统会自动解析
+- 删除角色时，其相关关系和事件引用会自动清理
+
+## 数据一致性
+- 修改角色信息后，检查是否需要同步更新关系描述或事件描述
+- 新增角色后，考虑是否需要建立与其他角色的关系
+- 创作正文时，确保角色行为与性格设定一致，事件发展与大纲走向一致
+- 用户要求修改多章节时，逐章处理，每章修改完再处理下一章
+"""
+
     async def _run_agent(
         self, event: AstrMessageEvent, novel: Novel, prompt: str, *, system_prompt: str | None = None
     ):
         umo = event.unified_msg_origin
         prov_id = self.config.get("provider_id", "") or await self.context.get_current_chat_provider_id(umo=umo)
         tools = ToolSet([t(storage=self.storage) for t in NOVEL_TOOLS])
-        resolved_system_prompt = system_prompt if system_prompt is not None else self.config.get("novel_system_prompt", "")
+        resolved_system_prompt = system_prompt if system_prompt is not None else self._SYSTEM_PROMPT
         max_steps = self.config.get("max_agent_steps", 30)
         timeout = self.config.get("tool_call_timeout", 60)
         return await self.context.tool_loop_agent(
@@ -206,7 +237,7 @@ class NovelGeneratorPlugin(Star):
             for r in novel.relationships:
                 name_a = novel.character_name_by_id(r.character_a)
                 name_b = novel.character_name_by_id(r.character_b)
-                rel_lines.append(f"  • {name_a} ↔ {name_b}({r.relation_type})")
+                rel_lines.append(f"  • {name_a} ↔ {name_b}(ID:{r.id}) [{r.relation_type}]")
             parts.append(f"关系（{len(novel.relationships)}条）：\n" + "\n".join(rel_lines))
 
         if novel.outlines:
@@ -314,6 +345,56 @@ class NovelGeneratorPlugin(Star):
             f"小说「{novel.name}」的创作会话已结束，数据已保存。使用 /novel switch 可重新激活。"
         )
 
+    @novel.command("download")
+    async def novel_download(self, event: AstrMessageEvent, chapter_number: int = 0):
+        """下载小说TXT文件，不指定章节号则下载全本"""
+        session_id = self._get_session_id(event)
+        novel = await self.storage.get_active_novel(session_id)
+        if novel is None:
+            yield event.plain_result(
+                "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
+            )
+            return
+        if not novel.chapters:
+            yield event.plain_result("当前小说暂无章节，无法下载。")
+            return
+
+        if chapter_number > 0:
+            target_ch = None
+            for ch in novel.chapters:
+                if ch.number == chapter_number:
+                    target_ch = ch
+                    break
+            if target_ch is None:
+                yield event.plain_result(f"未找到第{chapter_number}章。")
+                return
+            if not target_ch.content:
+                yield event.plain_result(f"第{chapter_number}章「{target_ch.title}」暂无内容。")
+                return
+            filename = f"{novel.name}_第{target_ch.number}章_{target_ch.title}.txt"
+            content = f"{novel.name}\n第{target_ch.number}章 {target_ch.title}\n\n{target_ch.content}"
+        else:
+            parts = [novel.name, "=" * len(novel.name.encode("utf-8"))]
+            for ch in novel.chapters:
+                parts.append(f"\n第{ch.number}章 {ch.title}\n")
+                if ch.content:
+                    parts.append(ch.content)
+                else:
+                    parts.append("（本章暂无内容）")
+                parts.append("")
+            content = "\n".join(parts)
+            filename = f"{novel.name}_全本.txt"
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", prefix="novel_", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(content)
+            tmp_path = f.name
+
+        safe_filename = filename.replace("/", "_").replace("\\", "_")
+        chain = [Comp.File(file=tmp_path, name=safe_filename)]
+        yield event.chain_result(chain)
+
     def _register_web_apis(self):
         prefix = f"/{PLUGIN_NAME}"
         self.context.register_web_api(
@@ -386,6 +467,15 @@ class NovelGeneratorPlugin(Star):
             data = await request.get_json()
             if data.get("_action") == "delete":
                 setattr(novel, collection_name, [i for i in items if i.id != item_id])
+                if collection_name == "characters":
+                    novel.relationships = [
+                        r for r in novel.relationships
+                        if r.character_a != item_id and r.character_b != item_id
+                    ]
+                    for e in novel.events:
+                        e.involved_characters = [
+                            c for c in e.involved_characters if c != item_id
+                        ]
                 await self.storage.save_novel(novel)
                 return jsonify({"success": True})
             else:
