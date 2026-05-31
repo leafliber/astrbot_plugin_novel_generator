@@ -7,8 +7,17 @@ from datetime import datetime
 from typing import ClassVar
 
 
+class EditableMixin:
+    EDITABLE_FIELDS: ClassVar[set[str]]
+
+    def apply_updates(self, data: dict) -> None:
+        for k, v in data.items():
+            if k in self.EDITABLE_FIELDS:
+                setattr(self, k, v)
+
+
 @dataclass
-class Character:
+class Character(EditableMixin):
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     name: str = ""
     personality: str = ""
@@ -18,14 +27,9 @@ class Character:
 
     EDITABLE_FIELDS: ClassVar[set[str]] = {"name", "personality", "appearance", "background", "notes"}
 
-    def apply_updates(self, data: dict) -> None:
-        for k, v in data.items():
-            if k in self.EDITABLE_FIELDS:
-                setattr(self, k, v)
-
 
 @dataclass
-class Relationship:
+class Relationship(EditableMixin):
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     character_a: str = ""
     character_b: str = ""
@@ -34,14 +38,9 @@ class Relationship:
 
     EDITABLE_FIELDS: ClassVar[set[str]] = {"character_a", "character_b", "relation_type", "description"}
 
-    def apply_updates(self, data: dict) -> None:
-        for k, v in data.items():
-            if k in self.EDITABLE_FIELDS:
-                setattr(self, k, v)
-
 
 @dataclass
-class Event:
+class Event(EditableMixin):
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     name: str = ""
     timeline_position: str = ""
@@ -50,14 +49,9 @@ class Event:
 
     EDITABLE_FIELDS: ClassVar[set[str]] = {"name", "timeline_position", "description", "involved_characters"}
 
-    def apply_updates(self, data: dict) -> None:
-        for k, v in data.items():
-            if k in self.EDITABLE_FIELDS:
-                setattr(self, k, v)
-
 
 @dataclass
-class Outline:
+class Outline(EditableMixin):
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     title: str = ""
     chapter_plan: str = ""
@@ -68,14 +62,9 @@ class Outline:
 
     EDITABLE_FIELDS: ClassVar[set[str]] = {"title", "chapter_plan", "plot_direction", "notes", "parent_id", "order"}
 
-    def apply_updates(self, data: dict) -> None:
-        for k, v in data.items():
-            if k in self.EDITABLE_FIELDS:
-                setattr(self, k, v)
-
 
 @dataclass
-class Chapter:
+class Chapter(EditableMixin):
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     number: int = 0
     title: str = ""
@@ -83,27 +72,17 @@ class Chapter:
     status: str = "draft"
     summary: str = ""
 
-    EDITABLE_FIELDS: ClassVar[set[str]] = {"number", "title", "content", "status", "summary"}
-
-    def apply_updates(self, data: dict) -> None:
-        for k, v in data.items():
-            if k in self.EDITABLE_FIELDS:
-                setattr(self, k, v)
+    EDITABLE_FIELDS: ClassVar[set[str]] = {"number", "title", "status", "summary"}
 
 
 @dataclass
-class WorldSetting:
+class WorldSetting(EditableMixin):
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     category: str = ""
     name: str = ""
     description: str = ""
 
     EDITABLE_FIELDS: ClassVar[set[str]] = {"category", "name", "description"}
-
-    def apply_updates(self, data: dict) -> None:
-        for k, v in data.items():
-            if k in self.EDITABLE_FIELDS:
-                setattr(self, k, v)
 
 
 SCHEMA_VERSION = 1

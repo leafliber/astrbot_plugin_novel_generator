@@ -86,8 +86,7 @@ class NovelGeneratorPlugin(Star):
     async def novel_create(self, event: AstrMessageEvent, name: str):
         """创建一本新小说"""
         session_id = self._get_session_id(event)
-        existing = await self.storage.list_novels()
-        if any(n.name == name for n in existing):
+        if await self.storage.find_novel_summary_by_name(name):
             yield event.plain_result(f"已存在名为「{name}」的小说，请使用其他名称。")
             return
         novel = Novel(name=name)
@@ -101,16 +100,11 @@ class NovelGeneratorPlugin(Star):
     async def novel_switch(self, event: AstrMessageEvent, name: str):
         """切换到指定小说"""
         session_id = self._get_session_id(event)
-        novels = await self.storage.list_novels()
-        target = None
-        for n in novels:
-            if n.name == name:
-                target = n
-                break
-        if target is None:
+        summary = await self.storage.find_novel_summary_by_name(name)
+        if summary is None:
             yield event.plain_result(f"未找到名为「{name}」的小说。")
             return
-        await self.storage.set_active_novel(session_id, target.id)
+        await self.storage.set_active_novel(session_id, summary["id"])
         yield event.plain_result(f"已切换到小说「{name}」。")
 
     @novel.command("list")
@@ -134,19 +128,15 @@ class NovelGeneratorPlugin(Star):
     async def novel_delete(self, event: AstrMessageEvent, name: str):
         """删除指定小说"""
         session_id = self._get_session_id(event)
-        novels = await self.storage.list_novels()
-        target = None
-        for n in novels:
-            if n.name == name:
-                target = n
-                break
-        if target is None:
+        summary = await self.storage.find_novel_summary_by_name(name)
+        if summary is None:
             yield event.plain_result(f"未找到名为「{name}」的小说。")
             return
-        active_novel = await self.storage.get_active_novel(session_id)
-        if active_novel and active_novel.id == target.id:
+        target_id = summary["id"]
+        active_novel_id = await self.storage._get_active_novel_id(session_id)
+        if active_novel_id and active_novel_id == target_id:
             await self.storage.remove_active_novel(session_id)
-        await self.storage.delete_novel(target.id)
+        await self.storage.delete_novel(target_id)
         yield event.plain_result(f"小说「{name}」已删除。")
 
     _SYSTEM_PROMPT = """\
@@ -483,7 +473,7 @@ class NovelGeneratorPlugin(Star):
             filename = f"{novel.name}_第{target_ch.number}章_{target_ch.title}.txt"
             content = f"{novel.name}\n第{target_ch.number}章 {target_ch.title}\n\n{target_ch.content}"
         else:
-            parts = [novel.name, "=" * len(novel.name.encode("utf-8"))]
+            parts = [novel.name, "=" * len(novel.name)]
             for ch in novel.chapters:
                 parts.append(f"\n第{ch.number}章 {ch.title}\n")
                 if ch.content:
@@ -547,10 +537,10 @@ class NovelGeneratorPlugin(Star):
             if request.method == "GET":
                 return jsonify([dataclasses.asdict(item) for item in items])
             elif request.method == "POST":
-                data = await request.get_json()
+                data = await request.get_json() or {}
                 kwargs = {f: data.get(f, "" if f != "involved_characters" else []) for f in create_fields}
                 if "number" in kwargs and kwargs["number"] == "":
-                    kwargs["number"] = len(items) + 1
+                    kwargs["number"] = max((item.number for item in items), default=0) + 1
                 item = model_cls(**kwargs)
                 items.append(item)
                 if sort_after_create:
@@ -568,7 +558,7 @@ class NovelGeneratorPlugin(Star):
             if novel is None:
                 return jsonify({"error": "Novel not found"}), 404
             items = getattr(novel, collection_name)
-            data = await request.get_json()
+            data = await request.get_json() or {}
             if data.get("_action") == "delete":
                 setattr(novel, collection_name, [i for i in items if i.id != item_id])
                 if collection_name == "characters":

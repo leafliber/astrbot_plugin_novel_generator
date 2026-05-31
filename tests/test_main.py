@@ -261,7 +261,7 @@ class TestNovelDelete:
         plugin.config = _make_config()
         novel = Novel(name="活跃小说")
         await storage.save_novel(novel)
-        storage.get_active_novel = AsyncMock(return_value=novel)
+        storage._get_active_novel_id = AsyncMock(return_value=novel.id)
         event = _make_event()
         gen = plugin.novel_delete(event, name="活跃小说")
         await gen.__anext__()

@@ -56,11 +56,11 @@ class NovelStorage:
         key = f"active_novel:{session_id}"
         await self._kv_plugin.delete_kv_data(key)
 
-    async def get_active_novel(self, session_id: str) -> Optional[Novel]:
+    async def get_active_novel(self, session_id: str, *, load_content: bool = True) -> Optional[Novel]:
         novel_id = await self._get_active_novel_id(session_id)
         if novel_id is None:
             return None
-        return await self.load_novel(novel_id)
+        return await self.load_novel(novel_id, load_content=load_content)
 
     async def set_active_novel(self, session_id: str, novel_id: str):
         await self._set_active_novel_id(session_id, novel_id)
@@ -146,14 +146,15 @@ class NovelStorage:
     def _chapter_path(self, novel_id: str, chapter_id: str) -> Path:
         return self._chapters_dir(novel_id) / f"{chapter_id}.txt"
 
-    def _save_novel_sync(self, novel: Novel):
+    def _save_novel_sync(self, novel: Novel, save_content: bool = True):
         novel.updated_at = datetime.now().isoformat()
-        chapters_dir = self._chapters_dir(novel.id)
-        for ch in novel.chapters:
-            ch_path = self._chapter_path(novel.id, ch.id)
-            tmp_ch = ch_path.with_suffix(".tmp")
-            tmp_ch.write_text(ch.content, encoding="utf-8")
-            os.replace(tmp_ch, ch_path)
+        if save_content:
+            chapters_dir = self._chapters_dir(novel.id)
+            for ch in novel.chapters:
+                ch_path = self._chapter_path(novel.id, ch.id)
+                tmp_ch = ch_path.with_suffix(".tmp")
+                tmp_ch.write_text(ch.content, encoding="utf-8")
+                os.replace(tmp_ch, ch_path)
         novel_dict = novel.to_dict()
         for ch_dict in novel_dict.get("chapters", []):
             ch_dict.pop("content", None)
@@ -165,18 +166,19 @@ class NovelStorage:
         os.replace(tmp_path, path)
         self._update_index_entry_sync(novel)
 
-    def _load_novel_sync(self, novel_id: str) -> Optional[Novel]:
+    def _load_novel_sync(self, novel_id: str, load_content: bool = True) -> Optional[Novel]:
         path = self._novel_path(novel_id)
         if not path.exists():
             return None
         data = json.loads(path.read_text(encoding="utf-8"))
-        for ch_dict in data.get("chapters", []):
-            ch_id = ch_dict.get("id", "")
-            ch_path = self._chapter_path(novel_id, ch_id)
-            if ch_path.exists():
-                ch_dict["content"] = ch_path.read_text(encoding="utf-8")
-            else:
-                ch_dict["content"] = ch_dict.get("content", "")
+        if load_content:
+            for ch_dict in data.get("chapters", []):
+                ch_id = ch_dict.get("id", "")
+                ch_path = self._chapter_path(novel_id, ch_id)
+                if ch_path.exists():
+                    ch_dict["content"] = ch_path.read_text(encoding="utf-8")
+                else:
+                    ch_dict["content"] = ch_dict.get("content", "")
         return Novel.from_dict(data)
 
     def _delete_novel_sync(self, novel_id: str) -> bool:
@@ -205,13 +207,13 @@ class NovelStorage:
                 logger.error(f"Failed to load novel from {path}: {e}")
         return novels
 
-    async def save_novel(self, novel: Novel):
+    async def save_novel(self, novel: Novel, *, save_content: bool = True):
         async with self._get_lock(novel.id):
-            await asyncio.to_thread(self._save_novel_sync, novel)
+            await asyncio.to_thread(self._save_novel_sync, novel, save_content)
 
-    async def load_novel(self, novel_id: str) -> Optional[Novel]:
+    async def load_novel(self, novel_id: str, *, load_content: bool = True) -> Optional[Novel]:
         async with self._get_lock(novel_id):
-            return await asyncio.to_thread(self._load_novel_sync, novel_id)
+            return await asyncio.to_thread(self._load_novel_sync, novel_id, load_content)
 
     async def delete_novel(self, novel_id: str) -> bool:
         async with self._get_lock(novel_id):
@@ -228,3 +230,12 @@ class NovelStorage:
         if not entries:
             entries = await asyncio.to_thread(self._rebuild_index_sync)
         return entries
+
+    async def find_novel_summary_by_name(self, name: str) -> Optional[dict]:
+        entries = await asyncio.to_thread(self._read_index_sync)
+        if not entries:
+            entries = await asyncio.to_thread(self._rebuild_index_sync)
+        for entry in entries:
+            if entry.get("name") == name:
+                return entry
+        return None
