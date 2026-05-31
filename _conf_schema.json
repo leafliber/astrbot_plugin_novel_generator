@@ -23,5 +23,17 @@
     "type": "text",
     "default": "",
     "hint": "可自定义写作风格、质量要求等，留空使用内置提示词"
+  },
+  "segment_max_length": {
+    "description": "分段发送时每段最大字符数，设为 0 或负数则不分段",
+    "type": "int",
+    "default": 2000,
+    "hint": "超过此长度的消息将被拆分为多条发送，设为 0 或负数关闭分段"
+  },
+  "segment_delay": {
+    "description": "分段发送时每段之间的延迟（秒），实际延迟会在此基础上增加 0-1 秒的随机抖动",
+    "type": "float",
+    "default": 5,
+    "hint": "设为 0 则无延迟"
   }
 }

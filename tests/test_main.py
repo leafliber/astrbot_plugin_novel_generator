@@ -39,6 +39,8 @@ def _make_config():
                 "novel_system_prompt": "你是一个小说创作助手",
                 "max_agent_steps": 30,
                 "tool_call_timeout": 60,
+                "segment_max_length": 2000,
+                "segment_delay": 5,
             }.get(key, default)
         )
     )
@@ -496,3 +498,148 @@ class TestGetSessionId:
         plugin.config = _make_config()
         event = _make_event(session_id="group_123")
         assert plugin._get_session_id(event) == "group_123"
+
+
+class TestSplitText:
+    def test_short_text_returns_single_segment(self):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        result = NovelGeneratorPlugin._split_text("短文本", max_length=2000)
+        assert result == ["短文本"]
+
+    def test_text_fits_with_header(self):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        result = NovelGeneratorPlugin._split_text("短文本", max_length=2000, header="标题")
+        assert result == ["标题\n\n短文本"]
+
+    def test_splits_on_paragraph_boundaries(self):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        # 3 paragraphs, each ~25 chars, max_length=30
+        para = "这是第一段内容，用来测试段落分割功能是否正常工作。"
+        text = f"{para}\n\n{para}\n\n{para}"
+        result = NovelGeneratorPlugin._split_text(text, max_length=30)
+        assert len(result) > 1
+        for seg in result:
+            assert len(seg) <= 30
+
+    def test_splits_oversized_paragraph_by_sentences(self):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        # Single paragraph with multiple sentences, no \n\n breaks
+        text = "这是第一句话。这是第二句话。这是第三句话。这是第四句话。这是第五句话。"
+        result = NovelGeneratorPlugin._split_text(text, max_length=30)
+        assert len(result) > 1
+        for seg in result:
+            assert len(seg) <= 30
+
+    def test_hard_splits_no_punctuation(self):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        text = "a" * 100
+        result = NovelGeneratorPlugin._split_text(text, max_length=30)
+        assert len(result) == 4  # 30+30+30+10
+        for seg in result:
+            assert len(seg) <= 30
+
+    def test_header_only_in_first_segment(self):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        para = "段落内容" * 50
+        text = f"{para}\n\n{para}"
+        result = NovelGeneratorPlugin._split_text(text, max_length=200, header="第一章 标题")
+        assert result[0].startswith("第一章 标题\n\n")
+        for seg in result[1:]:
+            assert not seg.startswith("第一章")
+
+    def test_header_too_long_returns_single(self):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        result = NovelGeneratorPlugin._split_text("内容", max_length=5, header="很长的标题")
+        assert len(result) == 1
+
+
+class TestYieldSegmented:
+    def _make_plugin(self):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
+            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
+        plugin.config = _make_config()
+        return plugin
+
+    @pytest.mark.asyncio
+    async def test_disabled_yields_single_message(self):
+        plugin = self._make_plugin()
+        plugin.config = MagicMock(
+            get=MagicMock(side_effect=lambda key, default=None: {"segment_max_length": 0, "segment_delay": 0}.get(key, default))
+        )
+        event = _make_event()
+        results = []
+        async for r in plugin._yield_segmented(event, "长文本内容"):
+            results.append(r)
+        assert len(results) == 1
+        event.plain_result.assert_called_once_with("长文本内容")
+
+    @pytest.mark.asyncio
+    async def test_short_text_no_index_prefix(self):
+        plugin = self._make_plugin()
+        plugin.config = MagicMock(
+            get=MagicMock(side_effect=lambda key, default=None: {"segment_max_length": 2000, "segment_delay": 0}.get(key, default))
+        )
+        event = _make_event()
+        results = []
+        async for r in plugin._yield_segmented(event, "短文本"):
+            results.append(r)
+        assert len(results) == 1
+        call_arg = event.plain_result.call_args[0][0]
+        assert not call_arg.startswith("[1/")
+
+    @pytest.mark.asyncio
+    async def test_long_text_has_index_prefix(self):
+        plugin = self._make_plugin()
+        plugin.config = MagicMock(
+            get=MagicMock(side_effect=lambda key, default=None: {"segment_max_length": 10, "segment_delay": 0}.get(key, default))
+        )
+        event = _make_event()
+        results = []
+        text = "第一段内容。第二段内容。第三段内容。第四段内容。"
+        async for r in plugin._yield_segmented(event, text):
+            results.append(r)
+        assert len(results) > 1
+        for i, call in enumerate(event.plain_result.call_args_list):
+            arg = call[0][0]
+            assert arg.startswith(f"[{i + 1}/")
+
+    @pytest.mark.asyncio
+    async def test_delay_between_segments(self):
+        plugin = self._make_plugin()
+        plugin.config = MagicMock(
+            get=MagicMock(side_effect=lambda key, default=None: {"segment_max_length": 10, "segment_delay": 2}.get(key, default))
+        )
+        event = _make_event()
+        with patch("astrbot_plugin_novel_generator.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            text = "第一句。第二句。第三句。第四句。"
+            results = []
+            async for r in plugin._yield_segmented(event, text):
+                results.append(r)
+            if len(results) > 1:
+                assert mock_sleep.call_count == len(results) - 1
+                for call in mock_sleep.call_args_list:
+                    delay_val = call[0][0]
+                    assert delay_val >= 2 and delay_val <= 3  # 2 + random(0,1)
+
+    @pytest.mark.asyncio
+    async def test_header_passed_through(self):
+        plugin = self._make_plugin()
+        plugin.config = MagicMock(
+            get=MagicMock(side_effect=lambda key, default=None: {"segment_max_length": 2000, "segment_delay": 0}.get(key, default))
+        )
+        event = _make_event()
+        results = []
+        async for r in plugin._yield_segmented(event, "正文", header="第一章 标题"):
+            results.append(r)
+        assert len(results) == 1
+        call_arg = event.plain_result.call_args[0][0]
+        assert call_arg == "第一章 标题\n\n正文"

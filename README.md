@@ -37,6 +37,8 @@ git clone https://github.com/cassia/astrbot_plugin_novel_generator.git AstrBot/d
 | `max_agent_steps` | `30` | Agent 最大执行步骤数，控制单次创作中的最大执行步骤 |
 | `tool_call_timeout` | `60` | 工具调用超时时间（秒） |
 | `novel_system_prompt` | 内置提示词 | Agent 创作时使用的系统提示词，可根据需要自定义 |
+| `segment_max_length` | `2000` | 分段发送时每段最大字符数，设为 0 或负数关闭分段 |
+| `segment_delay` | `5` | 分段发送时每段之间的延迟（秒），实际延迟会增加 0-1 秒随机抖动 |
 
 ## 指令使用
 

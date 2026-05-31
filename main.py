@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import dataclasses
-import tempfile
+import random
+import re
 from pathlib import Path
 from typing import Any
 
@@ -224,7 +227,8 @@ class NovelGeneratorPlugin(Star):
         context_info = self._build_context_info(novel)
         prompt = f"{context_info}\n用户要求：{requirement}\n请根据要求进行创作或修改，使用工具来创建新内容或更新已有数据。"
         llm_resp = await self._run_agent(event, novel, prompt)
-        yield event.plain_result(llm_resp.completion_text)
+        async for result in self._yield_segmented(event, llm_resp.completion_text):
+            yield result
 
     @novel.command("ask")
     async def novel_ask(self, event: AstrMessageEvent, *, question: str):
@@ -239,7 +243,8 @@ class NovelGeneratorPlugin(Star):
         context_info = self._build_context_info(novel)
         prompt = f"{context_info}\n用户问题：{question}\n请基于小说内容回答，如需查看详细数据请使用工具查询。"
         llm_resp = await self._run_agent(event, novel, prompt)
-        yield event.plain_result(llm_resp.completion_text)
+        async for result in self._yield_segmented(event, llm_resp.completion_text):
+            yield result
 
     @staticmethod
     def _build_context_info(novel: Novel) -> str:
@@ -295,6 +300,84 @@ class NovelGeneratorPlugin(Star):
             result = result[:max_total] + "\n...（内容过长已截断，请使用工具查询完整数据）\n"
         return result
 
+    @staticmethod
+    def _split_text(text: str, max_length: int = 2000, header: str | None = None) -> list[str]:
+        """Split text into segments respecting paragraph and sentence boundaries."""
+        effective_max = max_length - (len(header) + 2 if header else 0)
+        if effective_max <= 0 or len(text) <= effective_max:
+            full = f"{header}\n\n{text}" if header else text
+            return [full]
+
+        # Pass 1: split on paragraph boundaries, greedily merge
+        paragraphs = text.split("\n\n")
+        raw_segments: list[str] = []
+        current = ""
+        for para in paragraphs:
+            if not current:
+                current = para
+            elif len(current) + 2 + len(para) <= effective_max:
+                current += "\n\n" + para
+            else:
+                raw_segments.append(current)
+                current = para
+        if current:
+            raw_segments.append(current)
+
+        # Pass 2: split oversized segments by sentence boundaries
+        sentence_pat = re.compile(r".*?[。！？…~”」）\n]+|.+$")
+        final_segments: list[str] = []
+        for seg in raw_segments:
+            if len(seg) <= effective_max:
+                final_segments.append(seg)
+                continue
+            sentences = [s for s in sentence_pat.findall(seg) if s.strip()]
+            if not sentences:
+                final_segments.append(seg)
+                continue
+            sub = ""
+            for s in sentences:
+                if not sub:
+                    sub = s
+                elif len(sub) + len(s) <= effective_max:
+                    sub += s
+                else:
+                    final_segments.append(sub)
+                    sub = s
+            if sub:
+                final_segments.append(sub)
+
+        # Pass 3: hard-split anything still over the limit
+        result: list[str] = []
+        for seg in final_segments:
+            if len(seg) <= effective_max:
+                result.append(seg)
+            else:
+                for i in range(0, len(seg), effective_max):
+                    result.append(seg[i : i + effective_max])
+
+        # Prepend header to first segment
+        if header and result:
+            result[0] = f"{header}\n\n{result[0]}"
+        return result
+
+    async def _yield_segmented(self, event: AstrMessageEvent, text: str, *, header: str | None = None):
+        """Yield text as one or more plain_result messages, splitting if configured."""
+        max_length = self.config.get("segment_max_length", 2000)
+        if max_length <= 0:
+            yield event.plain_result(f"{header}\n\n{text}" if header else text)
+            return
+
+        segments = self._split_text(text, max_length, header)
+        total = len(segments)
+        delay = self.config.get("segment_delay", 5)
+
+        for i, seg in enumerate(segments):
+            if total > 1:
+                seg = f"[{i + 1}/{total}] {seg}"
+            yield event.plain_result(seg)
+            if delay > 0 and i < total - 1:
+                await asyncio.sleep(delay + random.uniform(0, 1))
+
     @novel.command("read")
     async def novel_read(self, event: AstrMessageEvent, chapter_number: int = 0):
         """阅读小说，可指定章节号"""
@@ -308,9 +391,10 @@ class NovelGeneratorPlugin(Star):
         if chapter_number > 0:
             for ch in novel.chapters:
                 if ch.number == chapter_number:
-                    yield event.plain_result(
-                        f"第{ch.number}章 {ch.title}\n\n{ch.content}"
-                    )
+                    async for result in self._yield_segmented(
+                        event, ch.content, header=f"第{ch.number}章 {ch.title}"
+                    ):
+                        yield result
                     return
             yield event.plain_result(f"未找到第{chapter_number}章。")
         else:
@@ -335,7 +419,8 @@ class NovelGeneratorPlugin(Star):
                 lines.append("\n章节目录：")
                 for ch in novel.chapters:
                     lines.append(f"  第{ch.number}章 {ch.title}")
-            yield event.plain_result("\n".join(lines))
+            async for result in self._yield_segmented(event, "\n".join(lines)):
+                yield result
 
     @novel.command("chapters")
     async def novel_chapters(self, event: AstrMessageEvent):
@@ -409,14 +494,9 @@ class NovelGeneratorPlugin(Star):
             content = "\n".join(parts)
             filename = f"{novel.name}_全本.txt"
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", prefix="novel_", delete=False, encoding="utf-8"
-        ) as f:
-            f.write(content)
-            tmp_path = f.name
-
         safe_filename = filename.replace("/", "_").replace("\\", "_")
-        chain = [Comp.File(file=tmp_path, name=safe_filename)]
+        b64 = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+        chain = [Comp.File(file=f"base64://{b64}", name=safe_filename)]
         yield event.chain_result(chain)
 
     def _register_web_apis(self):
