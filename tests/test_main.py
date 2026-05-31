@@ -76,7 +76,7 @@ class TestNovelGeneratorPluginInit:
         context = _make_context(None)
         config = _make_config()
         NovelGeneratorPlugin(context, config)
-        assert context.register_web_api.call_count == 12
+        assert context.register_web_api.call_count == 14
 
     @pytest.mark.asyncio
     async def test_terminate(self, MockStorage, tmp_data_base):
@@ -310,51 +310,6 @@ class TestNovelWrite:
             assert "冒险故事" in call_kwargs.kwargs["prompt"]
 
 
-class TestNovelRevise:
-    @pytest.mark.asyncio
-    async def test_revise_no_active_novel(self, tmp_data_base):
-        storage = _make_storage(tmp_data_base)
-        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
-
-        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
-            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
-        plugin.storage = storage
-        plugin.config = _make_config()
-        plugin.context = _make_context(storage)
-        storage.get_active_novel = AsyncMock(return_value=None)
-        event = _make_event()
-        gen = plugin.novel_revise(event, requirement="修改角色性格")
-        await gen.__anext__()
-        call_args = event.plain_result.call_args[0][0]
-        assert "没有激活" in call_args
-
-    @pytest.mark.asyncio
-    async def test_revise_calls_agent(self, tmp_data_base):
-        storage = _make_storage(tmp_data_base)
-        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
-
-        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
-            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
-        plugin.storage = storage
-        plugin.config = _make_config()
-        context = _make_context(storage)
-        plugin.context = context
-        novel = Novel(name="修改中")
-        await storage.save_novel(novel)
-        storage.get_active_novel = AsyncMock(return_value=novel)
-        mock_resp = MagicMock()
-        mock_resp.completion_text = "修改完成"
-        context.tool_loop_agent = AsyncMock(return_value=mock_resp)
-        with patch("astrbot_plugin_novel_generator.main.ToolSet"):
-            event = _make_event()
-            gen = plugin.novel_revise(event, requirement="修改角色性格")
-            await gen.__anext__()
-            context.tool_loop_agent.assert_called_once()
-            call_kwargs = context.tool_loop_agent.call_args
-            assert "修改角色性格" in call_kwargs.kwargs["prompt"]
-            assert "修正" in call_kwargs.kwargs["prompt"]
-
-
 class TestNovelAsk:
     @pytest.mark.asyncio
     async def test_ask_no_active_novel(self, tmp_data_base):
@@ -507,7 +462,7 @@ class TestWebAPIRegistration:
         context = _make_context(None)
         config = _make_config()
         NovelGeneratorPlugin(context, config)
-        assert context.register_web_api.call_count == 12
+        assert context.register_web_api.call_count == 14
 
     @patch("astrbot_plugin_novel_generator.main.NovelStorage")
     def test_api_registration_paths(self, MockStorage, tmp_data_base):

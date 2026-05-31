@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -150,27 +151,42 @@ class NovelGeneratorPlugin(Star):
 
 ## 创作流程
 1. 收到创作要求后，先审视当前小说数据（角色、关系、大纲、世界观等），理解已有设定
-2. 按需创建或更新角色、关系、世界观设定、事件等基础数据
-3. 规划或更新剧情大纲，明确章节走向
-4. 按大纲创作当前章节正文
+2. 如需了解某个角色/事件/大纲的完整信息，先用 query 操作获取详细数据（context_info 中的内容是摘要，可能被截断）
+3. 按需创建或更新角色、关系、世界观设定、事件等基础数据
+4. 规划或更新剧情大纲，明确章节走向
+5. 按大纲创作当前章节正文
+
+## 写作质量要求
+- 展示而非叙述（show, don't tell）：通过行动、对话和细节展现角色性格和情感，而非直接陈述
+- 对话应体现角色个性：不同角色的说话方式、用词习惯应有区别
+- 场景描写调动感官：视觉、听觉、触觉、嗅觉等，让读者身临其境
+- 节奏控制：紧张场景用短句和快节奏，抒情和描写场景可舒缓
+- 伏笔与呼应：前期埋下的线索应在后续章节有合理的回收
+- 角色行为一致性：角色在正文中的行为应与其性格设定保持一致
 
 ## 章节正文写入（关键）
 章节正文较长，必须分段写入，否则会因参数长度限制导致内容丢失：
 - 用 manage_chapter 的 create 创建章节，content 留空或只写开头段落
-- 用 append_content 分段追加正文，每次约 500-1000 字
+- 用 append_content 分段追加正文，每次约 500-800 字，写完一个完整的叙事段落或场景
 - 用 update 修改标题、状态、摘要等元数据（update 不会修改 content）
 - 切勿在单次工具调用中传入完整长篇正文
+
+## 修改已有内容
+- 修改章节正文时：如需大幅修改，建议删除后重建；如需小幅度补充，使用 append_content 追加
+- 修改角色/事件等设定时：用 update 操作更新对应字段
+- 修改多章节时：逐章处理，每章修改完再处理下一章
+- 删除角色后：系统会自动清理其关系和事件引用，但需手动检查大纲描述中是否有该角色的引用需要更新
 
 ## 数据引用规则
 - 角色在关系和事件中以 ID 引用，创建角色后会返回 ID，list 也会显示 ID
 - 创建关系或事件时，角色参数可传姓名或 ID，系统会自动解析
+- 可用 search 操作按名称模糊搜索角色或事件，快速定位目标
 - 删除角色时，其相关关系和事件引用会自动清理
 
 ## 数据一致性
 - 修改角色信息后，检查是否需要同步更新关系描述或事件描述
 - 新增角色后，考虑是否需要建立与其他角色的关系
 - 创作正文时，确保角色行为与性格设定一致，事件发展与大纲走向一致
-- 用户要求修改多章节时，逐章处理，每章修改完再处理下一章
 """
 
     async def _run_agent(
@@ -179,7 +195,10 @@ class NovelGeneratorPlugin(Star):
         umo = event.unified_msg_origin
         prov_id = self.config.get("provider_id", "") or await self.context.get_current_chat_provider_id(umo=umo)
         tools = ToolSet([t(storage=self.storage) for t in NOVEL_TOOLS])
-        resolved_system_prompt = system_prompt if system_prompt is not None else self._SYSTEM_PROMPT
+        resolved_system_prompt = system_prompt if system_prompt is not None else None
+        if resolved_system_prompt is None:
+            custom_prompt = self.config.get("novel_system_prompt", "")
+            resolved_system_prompt = custom_prompt if custom_prompt else self._SYSTEM_PROMPT
         max_steps = self.config.get("max_agent_steps", 30)
         timeout = self.config.get("tool_call_timeout", 60)
         return await self.context.tool_loop_agent(
@@ -224,12 +243,14 @@ class NovelGeneratorPlugin(Star):
 
     @staticmethod
     def _build_context_info(novel: Novel) -> str:
+        max_field = 150
+        max_total = 5000
         parts = [f"当前小说：「{novel.name}」"]
 
         if novel.characters:
             char_lines = []
             for c in novel.characters:
-                char_lines.append(f"  • {c.name}(ID:{c.id}): {c.personality[:60] if c.personality else '无性格描述'}")
+                char_lines.append(f"  • {c.name}(ID:{c.id}): {c.personality[:max_field] if c.personality else '无性格描述'}")
             parts.append(f"角色（{len(novel.characters)}个）：\n" + "\n".join(char_lines))
 
         if novel.relationships:
@@ -243,13 +264,13 @@ class NovelGeneratorPlugin(Star):
         if novel.outlines:
             out_lines = []
             for o in novel.outlines:
-                out_lines.append(f"  • {o.title}: 走向={o.plot_direction[:60] if o.plot_direction else '无'}")
+                out_lines.append(f"  • {o.title}: 走向={o.plot_direction[:max_field] if o.plot_direction else '无'}")
             parts.append(f"大纲（{len(novel.outlines)}条）：\n" + "\n".join(out_lines))
 
         if novel.world_settings:
             ws_lines = []
             for ws in novel.world_settings:
-                ws_lines.append(f"  • [{ws.category}] {ws.name}: {ws.description[:60] if ws.description else '无描述'}")
+                ws_lines.append(f"  • [{ws.category}] {ws.name}: {ws.description[:max_field] if ws.description else '无描述'}")
             parts.append(f"世界观设定（{len(novel.world_settings)}条）：\n" + "\n".join(ws_lines))
 
         if novel.events:
@@ -263,13 +284,16 @@ class NovelGeneratorPlugin(Star):
         if novel.chapters:
             ch_lines = []
             for ch in novel.chapters:
-                preview = ch.content[:80] + "..." if len(ch.content) > 80 else ch.content
+                preview = ch.content[:120] + "..." if len(ch.content) > 120 else ch.content
                 ch_lines.append(f"  第{ch.number}章 {ch.title}: {preview if preview else '（空）'}")
             parts.append(f"章节（{len(novel.chapters)}章）：\n" + "\n".join(ch_lines))
         else:
             parts.append("章节：暂无")
 
-        return "\n".join(parts) + "\n"
+        result = "\n".join(parts) + "\n"
+        if len(result) > max_total:
+            result = result[:max_total] + "\n...（内容过长已截断，请使用工具查询完整数据）\n"
+        return result
 
     @novel.command("read")
     async def novel_read(self, event: AstrMessageEvent, chapter_number: int = 0):
@@ -441,7 +465,7 @@ class NovelGeneratorPlugin(Star):
                 return jsonify({"error": "Novel not found"}), 404
             items = getattr(novel, collection_name)
             if request.method == "GET":
-                return jsonify([item.__dict__ for item in items])
+                return jsonify([dataclasses.asdict(item) for item in items])
             elif request.method == "POST":
                 data = await request.get_json()
                 kwargs = {f: data.get(f, "" if f != "involved_characters" else []) for f in create_fields}
@@ -452,7 +476,7 @@ class NovelGeneratorPlugin(Star):
                 if sort_after_create:
                     items.sort(key=lambda x: x.number)
                 await self.storage.save_novel(novel)
-                return jsonify(item.__dict__)
+                return jsonify(dataclasses.asdict(item))
 
         return handler
 
@@ -485,7 +509,7 @@ class NovelGeneratorPlugin(Star):
                         if sort_after_update:
                             items.sort(key=lambda x: x.number)
                         await self.storage.save_novel(novel)
-                        return jsonify(item.__dict__)
+                        return jsonify(dataclasses.asdict(item))
                 return jsonify({"error": f"{collection_name.rstrip('s').capitalize()} not found"}), 404
 
         return handler

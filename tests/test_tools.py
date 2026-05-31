@@ -21,6 +21,7 @@ from astrbot_plugin_novel_generator.tools import (
     EventTool,
     OutlineTool,
     RelationshipTool,
+    WorldSettingTool,
 )
 
 
@@ -80,12 +81,13 @@ class TestNovelToJson:
 
 class TestNOVELTOOLSList:
     def test_contains_all_tools(self):
-        assert len(NOVEL_TOOLS) == 5
+        assert len(NOVEL_TOOLS) == 6
         assert CharacterTool in NOVEL_TOOLS
         assert RelationshipTool in NOVEL_TOOLS
         assert EventTool in NOVEL_TOOLS
         assert OutlineTool in NOVEL_TOOLS
         assert ChapterTool in NOVEL_TOOLS
+        assert WorldSettingTool in NOVEL_TOOLS
 
     def test_tool_names_are_unique(self):
         names = [t().name for t in NOVEL_TOOLS]
@@ -228,6 +230,12 @@ class TestRelationshipTool:
 
     @pytest.mark.asyncio
     async def test_create(self, tool, storage, novel):
+        # 先创建两个角色，使 resolve_character_id 能解析姓名
+        char_a = Character(name="张三", personality="勇敢")
+        char_b = Character(name="李四", personality="聪明")
+        novel.characters.extend([char_a, char_b])
+        await storage.save_novel(novel)
+
         ctx = _make_context()
         result = await tool.call(
             ctx,
@@ -240,7 +248,9 @@ class TestRelationshipTool:
         assert "已创建" in str(result)
         loaded = await storage.load_novel(novel.id)
         assert len(loaded.relationships) == 1
-        assert loaded.relationships[0].character_a == "张三"
+        # 角色姓名会被自动解析为 ID
+        assert loaded.relationships[0].character_a == char_a.id
+        assert loaded.relationships[0].character_b == char_b.id
 
     @pytest.mark.asyncio
     async def test_query(self, tool, storage, novel):
@@ -312,6 +322,12 @@ class TestEventTool:
 
     @pytest.mark.asyncio
     async def test_create(self, tool, storage, novel):
+        # 先创建角色，使 involved_characters 的姓名能被解析为 ID
+        char_a = Character(name="张三", personality="勇敢")
+        char_b = Character(name="李四", personality="聪明")
+        novel.characters.extend([char_a, char_b])
+        await storage.save_novel(novel)
+
         ctx = _make_context()
         result = await tool.call(
             ctx,
@@ -324,7 +340,9 @@ class TestEventTool:
         assert "大战" in str(result)
         loaded = await storage.load_novel(novel.id)
         assert len(loaded.events) == 1
-        assert loaded.events[0].involved_characters == ["张三", "李四"]
+        # 姓名会被解析为角色 ID
+        assert char_a.id in loaded.events[0].involved_characters
+        assert char_b.id in loaded.events[0].involved_characters
 
     @pytest.mark.asyncio
     async def test_query(self, tool, storage, novel):

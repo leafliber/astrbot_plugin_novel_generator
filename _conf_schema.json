@@ -17,5 +17,11 @@
     "type": "int",
     "default": 60,
     "hint": "单个工具调用的超时时间"
+  },
+  "novel_system_prompt": {
+    "description": "Agent 创作时使用的系统提示词，留空则使用内置默认提示词",
+    "type": "text",
+    "default": "",
+    "hint": "可自定义写作风格、质量要求等，留空使用内置提示词"
   }
 }

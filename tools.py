@@ -15,39 +15,43 @@ from .storage import NovelStorage
 @dataclass
 class CharacterTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_character"
-    description: str = "管理小说中的角色画像。支持创建、查询、修改、删除角色信息，包括姓名、性格、外貌、背景等。"
+    description: str = "管理小说中的角色画像。支持创建、查询、修改、删除、列出和搜索角色信息，包括姓名、性格、外貌、背景等。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "操作类型：create(创建), query(查询), update(修改), delete(删除), list(列出所有)",
-                    "enum": ["create", "query", "update", "delete", "list"],
+                    "description": "操作类型：create(创建), query(按ID查询), update(修改), delete(删除), list(列出所有), search(按名称/描述模糊搜索)",
+                    "enum": ["create", "query", "update", "delete", "list", "search"],
                 },
                 "character_id": {
                     "type": "string",
-                    "description": "角色ID，query/update/delete时必填",
+                    "description": "角色ID。query/update/delete 时必填。",
                 },
                 "name": {
                     "type": "string",
-                    "description": "角色姓名，create/update时使用",
+                    "description": "角色姓名。create 时必填，update 时可选。",
                 },
                 "personality": {
                     "type": "string",
-                    "description": "角色性格描述，create/update时使用",
+                    "description": "角色性格描述。create/update 时可选。",
                 },
                 "appearance": {
                     "type": "string",
-                    "description": "角色外貌描述，create/update时使用",
+                    "description": "角色外貌描述。create/update 时可选。",
                 },
                 "background": {
                     "type": "string",
-                    "description": "角色背景故事，create/update时使用",
+                    "description": "角色背景故事。create/update 时可选。",
                 },
                 "notes": {
                     "type": "string",
-                    "description": "角色备注，create/update时使用",
+                    "description": "角色备注。create/update 时可选。",
+                },
+                "keyword": {
+                    "type": "string",
+                    "description": "搜索关键词，search 时必填。在姓名、性格、背景等字段中模糊匹配。",
                 },
             },
             "required": ["action"],
@@ -114,8 +118,20 @@ class CharacterTool(FunctionTool[AstrAgentContext]):
                         c for c in e.involved_characters if c != cid
                     ]
                 await storage.save_novel(novel)
-                return "角色已删除"
+                return "角色已删除，相关关系和事件引用已自动清理。请检查大纲描述中是否有需要同步修改的该角色引用。"
             return f"未找到ID为 {cid} 的角色"
+        elif action == "search":
+            keyword = kwargs.get("keyword", "")
+            if not keyword:
+                return "请提供搜索关键词"
+            result = []
+            for c in novel.characters:
+                fields = [c.name, c.personality, c.appearance, c.background, c.notes]
+                if any(keyword in f for f in fields):
+                    result.append(
+                        f"- {c.name}(ID:{c.id}): {c.personality[:60] if c.personality else '无性格描述'}"
+                    )
+            return "\n".join(result) if result else f"未找到包含「{keyword}」的角色"
         elif action == "list":
             if not novel.characters:
                 return "暂无角色"
@@ -131,35 +147,39 @@ class CharacterTool(FunctionTool[AstrAgentContext]):
 @dataclass
 class RelationshipTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_relationship"
-    description: str = "管理小说中角色之间的关系。支持创建、查询、修改、删除角色间关系，包括关系类型和描述。"
+    description: str = "管理小说中角色之间的关系。支持创建、查询、修改、删除、列出和搜索角色间关系，包括关系类型和描述。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "操作类型：create(创建), query(查询), update(修改), delete(删除), list(列出所有)",
-                    "enum": ["create", "query", "update", "delete", "list"],
+                    "description": "操作类型：create(创建), query(按ID查询), update(修改), delete(删除), list(列出所有), search(按类型/描述模糊搜索)",
+                    "enum": ["create", "query", "update", "delete", "list", "search"],
                 },
                 "relationship_id": {
                     "type": "string",
-                    "description": "关系ID，query/update/delete时必填",
+                    "description": "关系ID。query/update/delete 时必填。",
                 },
                 "character_a": {
                     "type": "string",
-                    "description": "角色A的姓名或ID，create/update时使用",
+                    "description": "角色A的姓名或ID。create/update 时使用。",
                 },
                 "character_b": {
                     "type": "string",
-                    "description": "角色B的姓名或ID，create/update时使用",
+                    "description": "角色B的姓名或ID。create/update 时使用。",
                 },
                 "relation_type": {
                     "type": "string",
-                    "description": "关系类型（如朋友、敌人、恋人等），create/update时使用",
+                    "description": "关系类型。常见：朋友、敌人、恋人、师徒、亲人、同僚、竞争对手、主从等，也可自定义。create/update 时使用。",
                 },
                 "description": {
                     "type": "string",
-                    "description": "关系描述，create/update时使用",
+                    "description": "关系描述。create/update 时使用。",
+                },
+                "keyword": {
+                    "type": "string",
+                    "description": "搜索关键词，search 时必填。在关系类型、描述、角色姓名中模糊匹配。",
                 },
             },
             "required": ["action"],
@@ -244,6 +264,20 @@ class RelationshipTool(FunctionTool[AstrAgentContext]):
                 await storage.save_novel(novel)
                 return "关系已删除"
             return f"未找到ID为 {rid} 的关系"
+        elif action == "search":
+            keyword = kwargs.get("keyword", "")
+            if not keyword:
+                return "请提供搜索关键词"
+            result = []
+            for r in novel.relationships:
+                name_a = novel.character_name_by_id(r.character_a)
+                name_b = novel.character_name_by_id(r.character_b)
+                fields = [r.relation_type, r.description, name_a, name_b]
+                if any(keyword in f for f in fields):
+                    result.append(
+                        f"- {name_a} ↔ {name_b}(ID:{r.id}) [{r.relation_type}]: {r.description[:50] if r.description else '无描述'}"
+                    )
+            return "\n".join(result) if result else f"未找到包含「{keyword}」的关系"
         elif action == "list":
             if not novel.relationships:
                 return "暂无角色关系"
@@ -261,36 +295,40 @@ class RelationshipTool(FunctionTool[AstrAgentContext]):
 @dataclass
 class EventTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_event"
-    description: str = "管理小说中的事件。支持创建、查询、修改、删除事件，包括事件名、时间线位置、描述、涉及角色等。"
+    description: str = "管理小说中的事件。支持创建、查询、修改、删除、列出和搜索事件，包括事件名、时间线位置、描述、涉及角色等。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "操作类型：create(创建), query(查询), update(修改), delete(删除), list(列出所有)",
-                    "enum": ["create", "query", "update", "delete", "list"],
+                    "description": "操作类型：create(创建), query(按ID查询), update(修改), delete(删除), list(列出所有), search(按名称/描述模糊搜索)",
+                    "enum": ["create", "query", "update", "delete", "list", "search"],
                 },
                 "event_id": {
                     "type": "string",
-                    "description": "事件ID，query/update/delete时必填",
+                    "description": "事件ID。query/update/delete 时必填。",
                 },
                 "name": {
                     "type": "string",
-                    "description": "事件名称，create/update时使用",
+                    "description": "事件名称。create 时必填，update 时可选。",
                 },
                 "timeline_position": {
                     "type": "string",
-                    "description": "时间线位置，create/update时使用",
+                    "description": "时间线位置（如「第一章」「故事前期」「大战之前」等）。create/update 时可选。",
                 },
                 "description": {
                     "type": "string",
-                    "description": "事件描述，create/update时使用",
+                    "description": "事件描述。create/update 时可选。",
                 },
                 "involved_characters": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "涉及角色的姓名或ID列表，create/update时使用",
+                    "description": "涉及角色的姓名或ID列表。create/update 时可选。",
+                },
+                "keyword": {
+                    "type": "string",
+                    "description": "搜索关键词，search 时必填。在事件名、时间线位置、描述中模糊匹配。",
                 },
             },
             "required": ["action"],
@@ -378,6 +416,20 @@ class EventTool(FunctionTool[AstrAgentContext]):
                 await storage.save_novel(novel)
                 return "事件已删除"
             return f"未找到ID为 {eid} 的事件"
+        elif action == "search":
+            keyword = kwargs.get("keyword", "")
+            if not keyword:
+                return "请提供搜索关键词"
+            result = []
+            for e in novel.events:
+                fields = [e.name, e.timeline_position, e.description]
+                if any(keyword in f for f in fields):
+                    char_names = [novel.character_name_by_id(c) for c in e.involved_characters]
+                    chars = ", ".join(char_names) if char_names else "无"
+                    result.append(
+                        f"- {e.name}(ID:{e.id}) [{e.timeline_position}]: {e.description[:50] if e.description else '无描述'} (涉及: {chars})"
+                    )
+            return "\n".join(result) if result else f"未找到包含「{keyword}」的事件"
         elif action == "list":
             if not novel.events:
                 return "暂无事件"
@@ -395,43 +447,47 @@ class EventTool(FunctionTool[AstrAgentContext]):
 @dataclass
 class OutlineTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_outline"
-    description: str = "管理小说的剧情大纲。支持创建、查询、修改、删除剧情大纲，包括章节规划和情节走向。"
+    description: str = "管理小说的剧情大纲。支持创建、查询、修改、删除、列出和搜索剧情大纲，包括章节规划和情节走向。支持层级结构。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "操作类型：create(创建), query(查询), update(修改), delete(删除), list(列出所有)",
-                    "enum": ["create", "query", "update", "delete", "list"],
+                    "description": "操作类型：create(创建), query(按ID查询), update(修改), delete(删除), list(列出所有，树形展示), search(按标题/走向模糊搜索)",
+                    "enum": ["create", "query", "update", "delete", "list", "search"],
                 },
                 "outline_id": {
                     "type": "string",
-                    "description": "大纲ID，query/update/delete时必填",
+                    "description": "大纲ID。query/update/delete 时必填。",
                 },
                 "title": {
                     "type": "string",
-                    "description": "大纲标题，create/update时使用",
+                    "description": "大纲标题。create 时必填，update 时可选。",
                 },
                 "chapter_plan": {
                     "type": "string",
-                    "description": "章节规划，create/update时使用",
+                    "description": "章节规划（如「1-5章」）。create/update 时可选。",
                 },
                 "plot_direction": {
                     "type": "string",
-                    "description": "情节走向，create/update时使用",
+                    "description": "情节走向描述。create/update 时可选。",
                 },
                 "notes": {
                     "type": "string",
-                    "description": "备注，create/update时使用",
+                    "description": "备注。create/update 时可选。",
                 },
                 "parent_id": {
                     "type": "string",
-                    "description": "父大纲ID，用于构建层级关系，留空表示顶层大纲，create/update时使用",
+                    "description": "父大纲ID，用于构建层级关系。留空表示顶层大纲。create/update 时可选。",
                 },
                 "order": {
                     "type": "integer",
-                    "description": "排序序号，数字越小越靠前，create/update时使用",
+                    "description": "排序序号，数字越小越靠前。create/update 时可选，默认追加到末尾。",
+                },
+                "keyword": {
+                    "type": "string",
+                    "description": "搜索关键词，search 时必填。在标题、章节规划、情节走向、备注中模糊匹配。",
                 },
             },
             "required": ["action"],
@@ -496,6 +552,18 @@ class OutlineTool(FunctionTool[AstrAgentContext]):
                 await storage.save_novel(novel)
                 return "大纲已删除"
             return f"未找到ID为 {oid} 的大纲"
+        elif action == "search":
+            keyword = kwargs.get("keyword", "")
+            if not keyword:
+                return "请提供搜索关键词"
+            result = []
+            for o in novel.outlines:
+                fields = [o.title, o.chapter_plan, o.plot_direction, o.notes]
+                if any(keyword in f for f in fields):
+                    result.append(
+                        f"- {o.title}(ID:{o.id}): 规划={o.chapter_plan[:50] if o.chapter_plan else '无'} | 走向={o.plot_direction[:50] if o.plot_direction else '无'}"
+                    )
+            return "\n".join(result) if result else f"未找到包含「{keyword}」的大纲"
         elif action == "list":
             if not novel.outlines:
                 return "暂无剧情大纲"
@@ -523,10 +591,10 @@ class OutlineTool(FunctionTool[AstrAgentContext]):
 class ChapterTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_chapter"
     description: str = (
-        "管理小说的章节内容。支持创建、查询、修改章节，包括章节号、标题和正文内容。"
+        "管理小说的章节内容。支持创建、查询、修改、删除、列出和搜索章节，包括章节号、标题和正文内容。"
         "重要：章节正文可能很长，请使用以下策略：1) 先用create创建章节（content留空或只写开头），"
-        "2) 然后多次使用append_content分段追加正文内容，每次追加一段（约500-1000字），"
-        "3) 使用update修改标题、状态、摘要等元数据。切勿在单次调用中传入完整长文。"
+        "2) 然后多次使用append_content分段追加正文内容，每次追加一段（约500-800字），"
+        "3) 使用update修改标题、状态、摘要等元数据（update不会修改content）。切勿在单次调用中传入完整长文。"
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -534,37 +602,41 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "操作类型：create(创建), query(查询), update(修改), delete(删除), list(列出所有), append_content(追加正文内容到指定章节)",
-                    "enum": ["create", "query", "update", "delete", "list", "append_content"],
+                    "description": "操作类型：create(创建), query(按ID查询), update(修改元数据), delete(删除), list(列出所有), append_content(追加正文到章节末尾), search(按标题/摘要模糊搜索)",
+                    "enum": ["create", "query", "update", "delete", "list", "append_content", "search"],
                 },
                 "chapter_id": {
                     "type": "string",
-                    "description": "章节ID，query/update/delete/append_content时必填",
+                    "description": "章节ID。query/update/delete/append_content 时必填。",
                 },
                 "number": {
                     "type": "integer",
-                    "description": "章节号，create/update时使用",
+                    "description": "章节号。create 时可选（默认自动递增），update 时可选。",
                 },
                 "title": {
                     "type": "string",
-                    "description": "章节标题，create/update时使用",
+                    "description": "章节标题。create/update 时可选。",
                 },
                 "content": {
                     "type": "string",
-                    "description": "章节正文内容，create时使用（建议仅写入开头，后续用append_content追加）",
+                    "description": "章节正文内容。仅 create 时使用（建议仅写入开头，后续用append_content追加）。update 不会修改此字段。",
                 },
                 "status": {
                     "type": "string",
-                    "description": "章节状态：draft(草稿), review(审核中), final(定稿)，create/update时使用",
+                    "description": "章节状态。create/update 时可选。draft(草稿), review(审核中), final(定稿)。",
                     "enum": ["draft", "review", "final"],
                 },
                 "summary": {
                     "type": "string",
-                    "description": "章节摘要，create/update时使用",
+                    "description": "章节摘要。create/update 时可选。",
                 },
                 "append_text": {
                     "type": "string",
-                    "description": "要追加到章节末尾的正文内容（约500-1000字），append_content时必填",
+                    "description": "要追加到章节末尾的正文内容（建议每段 300-800 字，一个完整的叙事段落或场景）。append_content 时必填。",
+                },
+                "keyword": {
+                    "type": "string",
+                    "description": "搜索关键词，search 时必填。在章节标题、摘要中模糊匹配。",
                 },
             },
             "required": ["action"],
@@ -622,7 +694,7 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
                     ch.apply_updates(update_data)
                     novel.chapters.sort(key=lambda x: x.number)
                     await storage.save_novel(novel)
-                    return f"第{ch.number}章「{ch.title}」已更新"
+                    return f"第{ch.number}章「{ch.title}」元数据已更新（注：update 不会修改正文内容，请使用 append_content 追加正文）"
             return f"未找到ID为 {cid} 的章节"
         elif action == "delete":
             cid = kwargs.get("chapter_id", "")
@@ -647,6 +719,19 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
                     content_len = len(ch.content)
                     return f"第{ch.number}章「{ch.title}」已追加内容，当前总字数：{content_len}"
             return f"未找到ID为 {cid} 的章节"
+        elif action == "search":
+            keyword = kwargs.get("keyword", "")
+            if not keyword:
+                return "请提供搜索关键词"
+            result = []
+            for ch in novel.chapters:
+                fields = [ch.title, ch.summary]
+                if any(keyword in f for f in fields):
+                    status_label = {"draft": "草稿", "review": "审核中", "final": "定稿"}.get(ch.status, ch.status)
+                    result.append(
+                        f"- 第{ch.number}章 {ch.title}(ID:{ch.id}) [{status_label}]"
+                    )
+            return "\n".join(result) if result else f"未找到包含「{keyword}」的章节"
         elif action == "list":
             if not novel.chapters:
                 return "暂无章节"
@@ -664,31 +749,35 @@ class ChapterTool(FunctionTool[AstrAgentContext]):
 @dataclass
 class WorldSettingTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_world_setting"
-    description: str = "管理小说的世界观设定。支持创建、查询、修改、删除世界观设定，包括时代背景、地理、魔法体系、社会结构等。"
+    description: str = "管理小说的世界观设定。支持创建、查询、修改、删除、列出和搜索世界观设定，包括时代背景、地理、魔法体系、社会结构等。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "操作类型：create(创建), query(查询), update(修改), delete(删除), list(列出所有)",
-                    "enum": ["create", "query", "update", "delete", "list"],
+                    "description": "操作类型：create(创建), query(按ID查询), update(修改), delete(删除), list(列出所有), search(按分类/名称/描述模糊搜索)",
+                    "enum": ["create", "query", "update", "delete", "list", "search"],
                 },
                 "setting_id": {
                     "type": "string",
-                    "description": "设定ID，query/update/delete时必填",
+                    "description": "设定ID。query/update/delete 时必填。",
                 },
                 "category": {
                     "type": "string",
-                    "description": "设定分类（如时代、地理、魔法体系、社会、种族等），create/update时使用",
+                    "description": "设定分类。常见：时代、地理、政治、经济、军事、魔法体系、科技水平、社会结构、种族、宗教、文化等，也可自定义。create/update 时可选。",
                 },
                 "name": {
                     "type": "string",
-                    "description": "设定名称，create/update时使用",
+                    "description": "设定名称。create 时必填，update 时可选。",
                 },
                 "description": {
                     "type": "string",
-                    "description": "设定详细描述，create/update时使用",
+                    "description": "设定详细描述。create/update 时可选。",
+                },
+                "keyword": {
+                    "type": "string",
+                    "description": "搜索关键词，search 时必填。在分类、名称、描述中模糊匹配。",
                 },
             },
             "required": ["action"],
@@ -745,6 +834,18 @@ class WorldSettingTool(FunctionTool[AstrAgentContext]):
                 await storage.save_novel(novel)
                 return "世界观设定已删除"
             return f"未找到ID为 {sid} 的世界观设定"
+        elif action == "search":
+            keyword = kwargs.get("keyword", "")
+            if not keyword:
+                return "请提供搜索关键词"
+            result = []
+            for ws in novel.world_settings:
+                fields = [ws.category, ws.name, ws.description]
+                if any(keyword in f for f in fields):
+                    result.append(
+                        f"- [{ws.category}] {ws.name}(ID:{ws.id}): {ws.description[:80] if ws.description else '无描述'}"
+                    )
+            return "\n".join(result) if result else f"未找到包含「{keyword}」的世界观设定"
         elif action == "list":
             if not novel.world_settings:
                 return "暂无世界观设定"
