@@ -27,7 +27,7 @@ from .models import (
     WorldSetting,
 )
 from .storage import PLUGIN_NAME, NovelStorage
-from .tools import NOVEL_TOOLS
+from .tools import NOVEL_TOOLS, make_readonly_tools
 
 _CRUD_CONFIG: dict[str, dict[str, Any]] = {
     "characters": {
@@ -182,6 +182,15 @@ class NovelGeneratorPlugin(Star):
 - 创作正文时，确保角色行为与性格设定一致，事件发展与大纲走向一致
 """
 
+    _READONLY_SYSTEM_PROMPT = """\
+你是一位专业的小说阅读助手，负责回答用户关于小说内容的问题。
+
+## 回答原则
+1. 基于小说已有数据回答问题，如需了解某个角色/事件/大纲/章节的完整信息，先用工具获取详细数据
+2. 你只能查询和搜索数据，不能创建、修改或删除任何内容
+3. 回答时引用具体的角色、事件、章节等数据，让回答有据可依
+4. 如果用户的问题涉及创作建议或修改要求，请告知用户使用 /novel write 命令"""
+
     async def _run_agent(
         self, event: AstrMessageEvent, novel: Novel, prompt: str, *, system_prompt: str | None = None
     ):
@@ -199,6 +208,24 @@ class NovelGeneratorPlugin(Star):
             chat_provider_id=prov_id,
             prompt=prompt,
             system_prompt=resolved_system_prompt,
+            tools=tools,
+            max_steps=max_steps,
+            tool_call_timeout=timeout,
+        )
+
+    async def _run_readonly_agent(
+        self, event: AstrMessageEvent, novel: Novel, prompt: str
+    ):
+        umo = event.unified_msg_origin
+        prov_id = self.config.get("provider_id", "") or await self.context.get_current_chat_provider_id(umo=umo)
+        tools = ToolSet([t(storage=self.storage) for t in make_readonly_tools()])
+        max_steps = self.config.get("max_agent_steps", 30)
+        timeout = self.config.get("tool_call_timeout", 60)
+        return await self.context.tool_loop_agent(
+            event=event,
+            chat_provider_id=prov_id,
+            prompt=prompt,
+            system_prompt=self._READONLY_SYSTEM_PROMPT,
             tools=tools,
             max_steps=max_steps,
             tool_call_timeout=timeout,
@@ -232,7 +259,7 @@ class NovelGeneratorPlugin(Star):
             return
         context_info = self._build_context_info(novel)
         prompt = f"{context_info}\n用户问题：{question}\n请基于小说内容回答，如需查看详细数据请使用工具查询。"
-        llm_resp = await self._run_agent(event, novel, prompt)
+        llm_resp = await self._run_readonly_agent(event, novel, prompt)
         async for result in self._yield_segmented(event, llm_resp.completion_text):
             yield result
 

@@ -347,11 +347,18 @@ class TestNovelAsk:
         mock_resp = MagicMock()
         mock_resp.completion_text = "主角是张三"
         context.tool_loop_agent = AsyncMock(return_value=mock_resp)
-        with patch("astrbot_plugin_novel_generator.main.ToolSet"):
+        with patch("astrbot_plugin_novel_generator.main.ToolSet") as mock_toolset:
             event = _make_event()
             gen = plugin.novel_ask(event, question="主角是谁")
             await gen.__anext__()
             context.tool_loop_agent.assert_called_once()
+            call_kwargs = context.tool_loop_agent.call_args.kwargs
+            # ask uses readonly system prompt (not the write one)
+            assert "阅读助手" in call_kwargs["system_prompt"]
+            # ToolSet receives readonly tools (class names end with "Readonly")
+            toolset_arg = mock_toolset.call_args[0][0]
+            tool_cls_names = [type(t).__name__ for t in toolset_arg]
+            assert all("Readonly" in n for n in tool_cls_names)
 
 
 class TestNovelRead:

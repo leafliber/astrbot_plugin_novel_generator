@@ -860,3 +860,41 @@ class WorldSettingTool(BaseNovelTool):
 
 
 NOVEL_TOOLS = [CharacterTool, RelationshipTool, EventTool, OutlineTool, ChapterTool, WorldSettingTool]
+
+_READONLY_ACTIONS = ["query", "list", "search"]
+_READONLY_ACTION_DESC = "操作类型：query(按ID查询), list(列出所有), search(按名称/描述模糊搜索)"
+
+
+def _make_readonly_cls(cls: type[BaseNovelTool]) -> type[BaseNovelTool]:
+    """Return a subclass with parameters patched to only expose read-only actions."""
+    # parameters is a dataclass field with default_factory, get default from field metadata
+    params = cls.__dataclass_fields__["parameters"].default_factory().copy()
+    props = params["properties"].copy()
+    action = props["action"].copy()
+    action["enum"] = _READONLY_ACTIONS
+    action["description"] = _READONLY_ACTION_DESC
+    props["action"] = action
+    params["properties"] = props
+
+    original_desc = cls.__dataclass_fields__["description"].default
+    if original_desc.startswith("管理小说中的"):
+        readonly_desc = "查询小说中的" + original_desc[len("管理小说中的"):]
+    elif original_desc.startswith("管理小说的"):
+        readonly_desc = "查询小说的" + original_desc[len("管理小说的"):]
+    elif original_desc.startswith("管理"):
+        readonly_desc = "查询" + original_desc[len("管理"):]
+    else:
+        readonly_desc = "查询" + original_desc
+
+    return type(
+        cls.__name__ + "Readonly",
+        (cls,),
+        {"parameters": params, "description": readonly_desc},
+    )
+
+
+READONLY_NOVEL_TOOLS = [_make_readonly_cls(t) for t in NOVEL_TOOLS]
+
+
+def make_readonly_tools() -> list[type[BaseNovelTool]]:
+    return READONLY_NOVEL_TOOLS
