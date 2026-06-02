@@ -650,3 +650,40 @@ class TestYieldSegmented:
         assert len(results) == 1
         call_arg = event.plain_result.call_args[0][0]
         assert call_arg == "第一章 标题\n\n正文"
+
+
+class TestBuildContextInfo:
+    @pytest.fixture(autouse=True)
+    def _import_plugin(self):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+        self.Plugin = NovelGeneratorPlugin
+
+    def test_synopsis_shown(self):
+        novel = Novel(name="测试", synopsis="这是一个关于冒险的故事。")
+        info = self.Plugin._build_context_info(novel)
+        assert "故事梗概" in info
+        assert "冒险" in info
+
+    def test_synopsis_absent(self):
+        novel = Novel(name="测试")
+        info = self.Plugin._build_context_info(novel)
+        assert "故事梗概" not in info
+
+    def test_chapter_summary_preferred_over_content(self):
+        ch = Chapter(number=1, order=1.0, title="开端", content="很久很久以前...", summary="主角出发了")
+        novel = Novel(name="测试", chapters=[ch])
+        info = self.Plugin._build_context_info(novel)
+        assert "主角出发了" in info
+        assert "很久很久以前" not in info
+
+    def test_chapter_content_fallback(self):
+        ch = Chapter(number=1, order=1.0, title="开端", content="很久很久以前...")
+        novel = Novel(name="测试", chapters=[ch])
+        info = self.Plugin._build_context_info(novel)
+        assert "很久很久以前" in info
+
+    def test_character_background_shown(self):
+        c = Character(name="张三", personality="勇敢", background="来自北方小村")
+        novel = Novel(name="测试", characters=[c])
+        info = self.Plugin._build_context_info(novel)
+        assert "北方小村" in info

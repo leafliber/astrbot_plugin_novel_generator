@@ -25,6 +25,7 @@ from .models import (
     Outline,
     Relationship,
     WorldSetting,
+    chapter_display,
 )
 from .storage import PLUGIN_NAME, NovelStorage
 from .tools import NOVEL_TOOLS, make_readonly_tools
@@ -52,7 +53,7 @@ _CRUD_CONFIG: dict[str, dict[str, Any]] = {
     },
     "chapters": {
         "model": Chapter,
-        "create_fields": ["number", "title", "content", "status", "summary"],
+        "create_fields": ["number", "order", "title", "content", "status", "summary", "label", "is_extra"],
         "sort_after_create": True,
     },
     "world_settings": {
@@ -164,6 +165,20 @@ class NovelGeneratorPlugin(Star):
 - 用 update 修改标题、状态、摘要等元数据（update 不会修改 content）
 - 切勿在单次工具调用中传入完整长篇正文
 
+## 章节排序与特殊章节
+章节有两个独立的概念：
+- number（章节号）：显示用标识，如 1、2、3。普通章节自动递增，不影响排序
+- order（排序权重）：控制章节在列表中的实际位置，由系统自动管理
+
+特殊章节（番外、序章、终章等）通过以下字段控制：
+- label：自定义显示标签，设置后覆盖默认的"第N章"格式（如"番外一·前传"、"序章"）
+- is_extra：番外标记。若 is_extra=true 且无 label，自动显示为"番外·标题"
+- 所有字段（label、is_extra、number、order）均可通过 update 随时修改
+
+调整章节顺序：
+- 少量调整（移动单个章节）：使用 move 动作，指定 before_chapter_id 或 after_chapter_id
+- 整体重排（批量调整多个章节）：使用 reorder 动作，传入完整的章节ID列表
+
 ## 修改已有内容
 - 修改章节正文时：如需大幅修改，建议删除后重建；如需小幅度补充，使用 append_content 追加
 - 修改角色/事件等设定时：用 update 操作更新对应字段
@@ -180,6 +195,20 @@ class NovelGeneratorPlugin(Star):
 - 修改角色信息后，检查是否需要同步更新关系描述或事件描述
 - 新增角色后，考虑是否需要建立与其他角色的关系
 - 创作正文时，确保角色行为与性格设定一致，事件发展与大纲走向一致
+
+## 章节摘要维护
+- 每完成一章正文后，务必用 manage_chapter 的 update 填写该章 summary（100-200字，概括关键情节、角色状态变化、伏笔线索）
+- summary 是后续章节创作的重要参考，会自动展示在上下文中
+
+## 故事梗概维护
+- 每次完成重要情节推进（如写完一章、角色关系发生重大变化、新伏笔埋下），使用 manage_novel 的 update_synopsis 更新故事梗概
+- synopsis 应包含：当前故事进展、未解决的冲突、各角色当前状态（300-500字）
+- 这能确保后续创作保持连贯，避免前后矛盾
+
+## 创作前回顾
+- 审阅 synopsis（故事梗概）了解整体进展
+- 如果需要回顾具体章节内容，用 manage_chapter 的 query 读取最近 1-2 章的完整正文
+- 特别注意：检查角色当前状态是否与之前章节一致，伏笔是否在后续得到合理回收
 """
 
     _READONLY_SYSTEM_PROMPT = """\
@@ -243,6 +272,15 @@ class NovelGeneratorPlugin(Star):
             return
         context_info = self._build_context_info(novel)
         prompt = f"{context_info}\n用户要求：{requirement}\n请根据要求进行创作或修改，使用工具来创建新内容或更新已有数据。"
+        # Auto-inject recent chapter context for continuity
+        if novel.chapters:
+            recent = []
+            for ch in sorted(novel.chapters, key=lambda x: x.order)[-2:]:
+                text = ch.summary or ch.content[:500]
+                if text:
+                    recent.append(f"  {chapter_display(ch)} {ch.title}: {text}")
+            if recent:
+                prompt += "\n\n最近章节回顾：\n" + "\n".join(recent)
         llm_resp = await self._run_agent(event, novel, prompt)
         async for result in self._yield_segmented(event, llm_resp.completion_text):
             yield result
@@ -265,14 +303,18 @@ class NovelGeneratorPlugin(Star):
 
     @staticmethod
     def _build_context_info(novel: Novel) -> str:
-        max_field = 150
-        max_total = 5000
+        max_field = 300
+        max_total = 8000
         parts = [f"当前小说：「{novel.name}」"]
+
+        if novel.synopsis:
+            parts.append(f"故事梗概：{novel.synopsis}")
 
         if novel.characters:
             char_lines = []
             for c in novel.characters:
-                char_lines.append(f"  • {c.name}(ID:{c.id}): {c.personality[:max_field] if c.personality else '无性格描述'}")
+                bg = f" | 背景: {c.background[:max_field]}" if c.background else ""
+                char_lines.append(f"  • {c.name}(ID:{c.id}): {c.personality[:max_field] if c.personality else '无性格描述'}{bg}")
             parts.append(f"角色（{len(novel.characters)}个）：\n" + "\n".join(char_lines))
 
         if novel.relationships:
@@ -280,13 +322,15 @@ class NovelGeneratorPlugin(Star):
             for r in novel.relationships:
                 name_a = novel.character_name_by_id(r.character_a)
                 name_b = novel.character_name_by_id(r.character_b)
-                rel_lines.append(f"  • {name_a} ↔ {name_b}(ID:{r.id}) [{r.relation_type}]")
+                desc = f": {r.description[:max_field]}" if r.description else ""
+                rel_lines.append(f"  • {name_a} ↔ {name_b}(ID:{r.id}) [{r.relation_type}]{desc}")
             parts.append(f"关系（{len(novel.relationships)}条）：\n" + "\n".join(rel_lines))
 
         if novel.outlines:
             out_lines = []
             for o in novel.outlines:
-                out_lines.append(f"  • {o.title}: 走向={o.plot_direction[:max_field] if o.plot_direction else '无'}")
+                plan = f" | 规划: {o.chapter_plan[:max_field]}" if o.chapter_plan else ""
+                out_lines.append(f"  • {o.title}: 走向={o.plot_direction[:max_field] if o.plot_direction else '无'}{plan}")
             parts.append(f"大纲（{len(novel.outlines)}条）：\n" + "\n".join(out_lines))
 
         if novel.world_settings:
@@ -300,14 +344,20 @@ class NovelGeneratorPlugin(Star):
             for e in novel.events:
                 char_names = [novel.character_name_by_id(c) for c in e.involved_characters]
                 chars = ", ".join(char_names) if char_names else "无"
-                evt_lines.append(f"  • {e.name}[{e.timeline_position}](涉及:{chars})")
+                desc = f": {e.description[:max_field]}" if e.description else ""
+                evt_lines.append(f"  • {e.name}[{e.timeline_position}](涉及:{chars}){desc}")
             parts.append(f"事件（{len(novel.events)}个）：\n" + "\n".join(evt_lines))
 
         if novel.chapters:
             ch_lines = []
             for ch in novel.chapters:
-                preview = ch.content[:120] + "..." if len(ch.content) > 120 else ch.content
-                ch_lines.append(f"  第{ch.number}章 {ch.title}: {preview if preview else '（空）'}")
+                if ch.summary:
+                    ch_lines.append(f"  {chapter_display(ch)} {ch.title}: {ch.summary}")
+                elif ch.content:
+                    preview = ch.content[:120] + "..."
+                    ch_lines.append(f"  {chapter_display(ch)} {ch.title}: {preview}")
+                else:
+                    ch_lines.append(f"  {chapter_display(ch)} {ch.title}: （空）")
             parts.append(f"章节（{len(novel.chapters)}章）：\n" + "\n".join(ch_lines))
         else:
             parts.append("章节：暂无")
@@ -408,8 +458,9 @@ class NovelGeneratorPlugin(Star):
         if chapter_number > 0:
             for ch in novel.chapters:
                 if ch.number == chapter_number:
+                    display = chapter_display(ch)
                     async for result in self._yield_segmented(
-                        event, ch.content, header=f"第{ch.number}章 {ch.title}"
+                        event, ch.content, header=f"{display} {ch.title}"
                     ):
                         yield result
                     return
@@ -435,7 +486,7 @@ class NovelGeneratorPlugin(Star):
             if novel.chapters:
                 lines.append("\n章节目录：")
                 for ch in novel.chapters:
-                    lines.append(f"  第{ch.number}章 {ch.title}")
+                    lines.append(f"  {chapter_display(ch)} {ch.title}")
             async for result in self._yield_segmented(event, "\n".join(lines)):
                 yield result
 
@@ -455,7 +506,7 @@ class NovelGeneratorPlugin(Star):
         lines = [f"📚 「{novel.name}」章节列表："]
         for ch in novel.chapters:
             content_len = len(ch.content)
-            lines.append(f"  第{ch.number}章 {ch.title}（{content_len}字）")
+            lines.append(f"  {chapter_display(ch)} {ch.title}（{content_len}字）")
         yield event.plain_result("\n".join(lines))
 
     @novel.command("stop")
@@ -495,14 +546,16 @@ class NovelGeneratorPlugin(Star):
                 yield event.plain_result(f"未找到第{chapter_number}章。")
                 return
             if not target_ch.content:
-                yield event.plain_result(f"第{chapter_number}章「{target_ch.title}」暂无内容。")
+                yield event.plain_result(f"{chapter_display(target_ch)}「{target_ch.title}」暂无内容。")
                 return
-            filename = f"{novel.name}_第{target_ch.number}章_{target_ch.title}.txt"
-            content = f"{novel.name}\n第{target_ch.number}章 {target_ch.title}\n\n{target_ch.content}"
+            display = chapter_display(target_ch)
+            filename = f"{novel.name}_{display}_{target_ch.title}.txt"
+            content = f"{novel.name}\n{display} {target_ch.title}\n\n{target_ch.content}"
         else:
             parts = [novel.name, "=" * len(novel.name)]
             for ch in novel.chapters:
-                parts.append(f"\n第{ch.number}章 {ch.title}\n")
+                display = chapter_display(ch)
+                parts.append(f"\n{display} {ch.title}\n")
                 if ch.content:
                     parts.append(ch.content)
                 else:
@@ -568,10 +621,12 @@ class NovelGeneratorPlugin(Star):
                 kwargs = {f: data.get(f, "" if f != "involved_characters" else []) for f in create_fields}
                 if "number" in kwargs and kwargs["number"] == "":
                     kwargs["number"] = max((item.number for item in items), default=0) + 1
+                if "order" in kwargs and kwargs["order"] == "":
+                    kwargs["order"] = max((item.order for item in items), default=0.0) + 1.0
                 item = model_cls(**kwargs)
                 items.append(item)
                 if sort_after_create:
-                    items.sort(key=lambda x: x.number)
+                    items.sort(key=lambda x: x.order)
                 await self.storage.save_novel(novel)
                 return jsonify(dataclasses.asdict(item))
 
@@ -604,7 +659,7 @@ class NovelGeneratorPlugin(Star):
                     if item.id == item_id:
                         item.apply_updates(data)
                         if sort_after_update:
-                            items.sort(key=lambda x: x.number)
+                            items.sort(key=lambda x: x.order)
                         await self.storage.save_novel(novel)
                         return jsonify(dataclasses.asdict(item))
                 return jsonify({"error": f"{collection_name.rstrip('s').capitalize()} not found"}), 404

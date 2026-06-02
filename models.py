@@ -67,12 +67,15 @@ class Outline(EditableMixin):
 class Chapter(EditableMixin):
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     number: int = 0
+    order: float = 0.0
     title: str = ""
     content: str = ""
     status: str = "draft"
     summary: str = ""
+    label: str = ""
+    is_extra: bool = False
 
-    EDITABLE_FIELDS: ClassVar[set[str]] = {"number", "title", "status", "summary"}
+    EDITABLE_FIELDS: ClassVar[set[str]] = {"number", "order", "title", "status", "summary", "label", "is_extra"}
 
 
 @dataclass
@@ -101,6 +104,7 @@ class Novel:
     outlines: list[Outline] = field(default_factory=list)
     chapters: list[Chapter] = field(default_factory=list)
     world_settings: list[WorldSetting] = field(default_factory=list)
+    synopsis: str = ""
 
     def resolve_character_ref(self, ref: str) -> Character | None:
         for c in self.characters:
@@ -129,6 +133,11 @@ class Novel:
         outlines = [Outline(**o) for o in data.get("outlines", [])]
         chapters = [Chapter(**ch) for ch in data.get("chapters", [])]
         world_settings = [WorldSetting(**w) for w in data.get("world_settings", [])]
+        # Migration: if ALL chapters have order==0.0, they came from old data
+        # that lacked the order field — assign sequential order values.
+        if chapters and all(ch.order == 0.0 for ch in chapters):
+            for idx, ch in enumerate(chapters):
+                ch.order = idx + 1.0
         return cls(
             id=data.get("id", uuid.uuid4().hex[:12]),
             name=data.get("name", ""),
@@ -141,4 +150,17 @@ class Novel:
             outlines=outlines,
             chapters=chapters,
             world_settings=world_settings,
+            synopsis=data.get("synopsis", ""),
         )
+
+
+def chapter_display(ch: Chapter) -> str:
+    """Return the display label for a chapter.
+
+    Priority: label > is_extra fallback > default "第N章".
+    """
+    if ch.label:
+        return ch.label
+    if ch.is_extra:
+        return f"番外·{ch.title}"
+    return f"第{ch.number}章"

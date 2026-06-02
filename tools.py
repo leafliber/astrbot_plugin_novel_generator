@@ -8,12 +8,16 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
-from .models import Character, Chapter, Event, Novel, Outline, Relationship, WorldSetting
+from .models import Character, Chapter, Event, Novel, Outline, Relationship, WorldSetting, chapter_display
 from .storage import NovelStorage
 
 
 def _next_chapter_number(novel: Novel) -> int:
     return max((ch.number for ch in novel.chapters), default=0) + 1
+
+
+def _next_chapter_order(novel: Novel) -> float:
+    return max((ch.order for ch in novel.chapters), default=0.0) + 1.0
 
 
 @dataclass
@@ -601,10 +605,24 @@ class ChapterTool(BaseNovelTool):
 
     name: str = "manage_chapter"
     description: str = (
-        "管理小说的章节内容。支持创建、查询、修改、删除、列出和搜索章节，包括章节号、标题和正文内容。"
-        "重要：章节正文可能很长，请使用以下策略：1) 先用create创建章节（content留空或只写开头），"
-        "2) 然后多次使用append_content分段追加正文内容，每次追加一段（约500-800字），"
-        "3) 使用update修改标题、状态、摘要等元数据（update不会修改content）。切勿在单次调用中传入完整长文。"
+        "管理小说的章节内容。\n"
+        "\n"
+        "## 正文写入策略\n"
+        "章节正文较长，必须分段写入：1) create 创建章节（content 留空或只写开头），"
+        "2) append_content 分段追加正文（每次约 500-800 字），"
+        "3) update 修改元数据（update 不会修改 content）。切勿在单次调用中传入完整长文。\n"
+        "\n"
+        "## 排序机制\n"
+        "章节排序由 order 字段控制（数字越小越靠前），与 number（章节号）独立。"
+        "number 仅用于显示（如「第3章」），不影响实际排列顺序。\n"
+        "\n"
+        "## 特殊章节\n"
+        "番外、序章、终章等可通过 label 设置自定义显示名（如「番外一·前传」），"
+        "设 is_extra=true 可标记为番外（无 label 时显示「番外·标题」）。label 和 is_extra 均可通过 update 随时修改。\n"
+        "\n"
+        "## 调整顺序\n"
+        "- move：移动单个章节，指定 before/after_chapter_id 作为锚点。适合微调。"
+        "- reorder：传入完整的章节ID列表重排全部章节。适合大规模调整。"
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -612,16 +630,20 @@ class ChapterTool(BaseNovelTool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "操作类型：create(创建), query(按ID查询), update(修改元数据), delete(删除), list(列出所有), append_content(追加正文到章节末尾), search(按标题/摘要模糊搜索)",
-                    "enum": ["create", "query", "update", "delete", "list", "append_content", "search"],
+                    "description": "操作类型：create(创建), query(按ID查询), update(修改元数据), delete(删除), list(列出所有), append_content(追加正文到章节末尾), search(按标题/摘要模糊搜索), reorder(整体重排章节顺序), move(单章移动到指定位置)",
+                    "enum": ["create", "query", "update", "delete", "list", "append_content", "search", "reorder", "move"],
                 },
                 "chapter_id": {
                     "type": "string",
-                    "description": "章节ID。query/update/delete/append_content 时必填。",
+                    "description": "章节ID。query/update/delete/append_content/move 时必填。",
                 },
                 "number": {
                     "type": "integer",
-                    "description": "章节号。create 时可选（默认自动递增），update 时可选。",
+                    "description": "章节号（显示用）。create/update 时可选。普通章节默认自动递增。",
+                },
+                "order": {
+                    "type": "number",
+                    "description": "排序权重（浮点数），数字越小越靠前。create/update 时可选。reorder/move 会自动管理此字段。",
                 },
                 "title": {
                     "type": "string",
@@ -640,13 +662,34 @@ class ChapterTool(BaseNovelTool):
                     "type": "string",
                     "description": "章节摘要。create/update 时可选。",
                 },
+                "label": {
+                    "type": "string",
+                    "description": "自定义显示标签，设置后覆盖默认的「第N章」格式。用于番外（如「番外一·前传」）、序章、终章等特殊章节。create/update 时可选。",
+                },
+                "is_extra": {
+                    "type": "boolean",
+                    "description": "是否为番外章节。true时若无label则显示为「番外·标题」。create/update 时可选。",
+                },
                 "append_text": {
                     "type": "string",
                     "description": "要追加到章节末尾的正文内容（建议每段 300-800 字，一个完整的叙事段落或场景）。append_content 时必填。",
                 },
                 "keyword": {
                     "type": "string",
-                    "description": "搜索关键词，search 时必填。在章节标题、摘要中模糊匹配。",
+                    "description": "搜索关键词，search 时必填。在章节标题、摘要、label中模糊匹配。不搜索正文内容，如需查看正文请用 query。",
+                },
+                "chapter_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "完整的章节ID列表，按目标顺序排列。reorder 时必填。",
+                },
+                "before_chapter_id": {
+                    "type": "string",
+                    "description": "锚点章节ID，将目标章节移到此章节之前。例如 before=X 表示目标章节排在 X 前面。move 时与 after_chapter_id 二选一。",
+                },
+                "after_chapter_id": {
+                    "type": "string",
+                    "description": "锚点章节ID，将目标章节移到此章节之后。例如 after=X 表示目标章节排在 X 后面。move 时与 before_chapter_id 二选一。",
                 },
             },
             "required": ["action"],
@@ -662,20 +705,25 @@ class ChapterTool(BaseNovelTool):
         action = kwargs.get("action", "")
         if action == "create":
             ch_number = kwargs.get("number", _next_chapter_number(novel))
+            ch_order = kwargs.get("order", _next_chapter_order(novel))
             existing_numbers = {ch.number for ch in novel.chapters}
             if ch_number in existing_numbers:
                 return f"错误：第{ch_number}章已存在，请使用其他章节号或省略number让系统自动分配。"
             ch = Chapter(
                 number=ch_number,
+                order=ch_order,
                 title=kwargs.get("title", ""),
                 content=kwargs.get("content", ""),
                 status=kwargs.get("status", "draft"),
                 summary=kwargs.get("summary", ""),
+                label=kwargs.get("label", ""),
+                is_extra=kwargs.get("is_extra", False),
             )
             novel.chapters.append(ch)
-            novel.chapters.sort(key=lambda x: x.number)
+            novel.chapters.sort(key=lambda x: x.order)
             await self._save(novel)
-            return f"第{ch.number}章「{ch.title}」已创建，ID: {ch.id}"
+            display = chapter_display(ch)
+            return f"{display}「{ch.title}」已创建，ID: {ch.id}"
         elif action == "query":
             cid = kwargs.get("chapter_id", "")
             for ch in novel.chapters:
@@ -684,10 +732,13 @@ class ChapterTool(BaseNovelTool):
                         {
                             "id": ch.id,
                             "number": ch.number,
+                            "order": ch.order,
                             "title": ch.title,
                             "content": ch.content,
                             "status": ch.status,
                             "summary": ch.summary,
+                            "label": ch.label,
+                            "is_extra": ch.is_extra,
                         },
                         ensure_ascii=False,
                     )
@@ -697,9 +748,10 @@ class ChapterTool(BaseNovelTool):
             for ch in novel.chapters:
                 if ch.id == cid:
                     ch.apply_updates(kwargs)
-                    novel.chapters.sort(key=lambda x: x.number)
+                    novel.chapters.sort(key=lambda x: x.order)
                     await self._save(novel)
-                    return f"第{ch.number}章「{ch.title}」元数据已更新（注：update 不会修改正文内容，请使用 append_content 追加正文）"
+                    display = chapter_display(ch)
+                    return f"{display}「{ch.title}」元数据已更新（注：update 不会修改正文内容，请使用 append_content 追加正文）"
             return f"未找到ID为 {cid} 的章节"
         elif action == "delete":
             cid = kwargs.get("chapter_id", "")
@@ -722,7 +774,8 @@ class ChapterTool(BaseNovelTool):
                         ch.content = append_text
                     await self._save(novel)
                     content_len = len(ch.content)
-                    return f"第{ch.number}章「{ch.title}」已追加内容，当前总字数：{content_len}"
+                    display = chapter_display(ch)
+                    return f"{display}「{ch.title}」已追加内容，当前总字数：{content_len}。建议章节正文写完后，使用 update 更新 summary 字段概括本章关键情节和角色状态变化。"
             return f"未找到ID为 {cid} 的章节"
         elif action == "search":
             keyword = kwargs.get("keyword", "")
@@ -730,11 +783,12 @@ class ChapterTool(BaseNovelTool):
                 return "请提供搜索关键词"
             result = []
             for ch in novel.chapters:
-                fields = [ch.title, ch.summary]
+                fields = [ch.title, ch.summary, ch.label]
                 if any(keyword in f for f in fields):
                     status_label = {"draft": "草稿", "review": "审核中", "final": "定稿"}.get(ch.status, ch.status)
+                    display = chapter_display(ch)
                     result.append(
-                        f"- 第{ch.number}章 {ch.title}(ID:{ch.id}) [{status_label}]"
+                        f"- {display} {ch.title}(ID:{ch.id}) [{status_label}]"
                     )
             return "\n".join(result) if result else f"未找到包含「{keyword}」的章节"
         elif action == "list":
@@ -744,10 +798,98 @@ class ChapterTool(BaseNovelTool):
             for ch in novel.chapters:
                 status_label = {"draft": "草稿", "review": "审核中", "final": "定稿"}.get(ch.status, ch.status)
                 summary_info = f" | 摘要: {ch.summary[:40]}" if ch.summary else ""
+                display = chapter_display(ch)
+                extra_tag = " [番外]" if ch.is_extra else ""
                 result.append(
-                    f"- 第{ch.number}章 {ch.title}(ID:{ch.id}) [{status_label}]{summary_info}"
+                    f"- {display} {ch.title}(ID:{ch.id}, order={ch.order}) [{status_label}]{extra_tag}{summary_info}"
                 )
             return "\n".join(result)
+        elif action == "reorder":
+            chapter_ids = kwargs.get("chapter_ids", [])
+            if not chapter_ids:
+                return "错误：chapter_ids不能为空。"
+            if len(chapter_ids) != len(novel.chapters):
+                return f"错误：传入了{len(chapter_ids)}个ID，但当前有{len(novel.chapters)}个章节，数量必须一致。"
+            existing_ids = {ch.id for ch in novel.chapters}
+            for cid in chapter_ids:
+                if cid not in existing_ids:
+                    return f"错误：章节ID {cid} 不存在。"
+            id_to_ch = {ch.id: ch for ch in novel.chapters}
+            novel.chapters = []
+            for idx, cid in enumerate(chapter_ids):
+                ch = id_to_ch[cid]
+                ch.order = idx + 1.0
+                novel.chapters.append(ch)
+            await self._save(novel)
+            # Return the reordered list for confirmation
+            reordered = []
+            for ch in novel.chapters:
+                display = chapter_display(ch)
+                reordered.append(f"  {ch.order:.0f}. {display} {ch.title}(ID:{ch.id})")
+            return f"章节顺序已重排，共{len(novel.chapters)}章：\n" + "\n".join(reordered)
+        elif action == "move":
+            cid = kwargs.get("chapter_id", "")
+            before_id = kwargs.get("before_chapter_id", "")
+            after_id = kwargs.get("after_chapter_id", "")
+            if not cid:
+                return "错误：chapter_id不能为空。"
+            if not before_id and not after_id:
+                return "错误：必须指定 before_chapter_id 或 after_chapter_id。"
+            if before_id and after_id:
+                return "错误：before_chapter_id 和 after_chapter_id 只能指定一个。"
+            # Find target chapter
+            target = None
+            for ch in novel.chapters:
+                if ch.id == cid:
+                    target = ch
+                    break
+            if target is None:
+                return f"未找到ID为 {cid} 的章节"
+            # Sort chapters by order for neighbor lookup
+            novel.chapters.sort(key=lambda x: x.order)
+            anchor_id = before_id or after_id
+            if cid == anchor_id:
+                return "错误：不能将章节移动到自身位置。"
+            # Find anchor index
+            anchor_idx = None
+            for i, ch in enumerate(novel.chapters):
+                if ch.id == anchor_id:
+                    anchor_idx = i
+                    break
+            if anchor_idx is None:
+                return f"未找到锚点章节ID {anchor_id}"
+            if before_id:
+                # Move target before anchor
+                # New order = midpoint between prev and anchor
+                if anchor_idx == 0:
+                    new_order = novel.chapters[0].order - 1.0
+                else:
+                    prev_order = novel.chapters[anchor_idx - 1].order
+                    # Skip target itself if it's the prev
+                    if novel.chapters[anchor_idx - 1].id == cid and anchor_idx >= 2:
+                        prev_order = novel.chapters[anchor_idx - 2].order
+                    elif novel.chapters[anchor_idx - 1].id == cid:
+                        prev_order = novel.chapters[anchor_idx].order - 2.0
+                    new_order = (prev_order + novel.chapters[anchor_idx].order) / 2.0
+            else:
+                # Move target after anchor
+                if anchor_idx == len(novel.chapters) - 1:
+                    new_order = novel.chapters[-1].order + 1.0
+                else:
+                    next_order = novel.chapters[anchor_idx + 1].order
+                    # Skip target itself if it's the next
+                    if novel.chapters[anchor_idx + 1].id == cid and anchor_idx + 2 < len(novel.chapters):
+                        next_order = novel.chapters[anchor_idx + 2].order
+                    elif novel.chapters[anchor_idx + 1].id == cid:
+                        next_order = novel.chapters[anchor_idx].order + 2.0
+                    new_order = (novel.chapters[anchor_idx].order + next_order) / 2.0
+            target.order = new_order
+            novel.chapters.sort(key=lambda x: x.order)
+            await self._save(novel)
+            display = chapter_display(target)
+            id_to_ch = {ch.id: ch for ch in novel.chapters}
+            direction = f"移到{chapter_display(id_to_ch[anchor_id])}之前" if before_id else f"移到{chapter_display(id_to_ch[anchor_id])}之后"
+            return f"{display}「{target.title}」已{direction}（order={new_order}）"
         return "未知操作"
 
 
@@ -859,7 +1001,53 @@ class WorldSettingTool(BaseNovelTool):
         return "未知操作"
 
 
-NOVEL_TOOLS = [CharacterTool, RelationshipTool, EventTool, OutlineTool, ChapterTool, WorldSettingTool]
+@dataclass
+class NovelTool(BaseNovelTool):
+    name: str = "manage_novel"
+    description: str = (
+        "管理小说的全局信息。\n"
+        "\n"
+        "## update_synopsis\n"
+        "更新全书故事梗概（synopsis）。应包含：当前故事进展、未解决的冲突、各角色当前状态（300-500字）。\n"
+        "每次完成重要情节推进（如写完一章、角色关系发生重大变化、新伏笔埋下）后都应更新，"
+        "以确保后续创作保持连贯，避免前后矛盾。"
+    )
+    parameters: dict = field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "操作类型：update_synopsis(更新全书故事梗概)",
+                    "enum": ["update_synopsis"],
+                },
+                "synopsis": {
+                    "type": "string",
+                    "description": "全书故事梗概（300-500字）。应包含：当前故事进展、未解决的冲突、各主要角色当前状态。",
+                },
+            },
+            "required": ["action"],
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
+        novel, err = await self._get_novel(context)
+        if err:
+            return err
+        action = kwargs.get("action", "")
+        if action == "update_synopsis":
+            synopsis = kwargs.get("synopsis", "")
+            if not synopsis:
+                return "错误：synopsis不能为空。"
+            novel.synopsis = synopsis
+            await self._save(novel)
+            return f"故事梗概已更新（{len(synopsis)}字）"
+        return "未知操作"
+
+
+NOVEL_TOOLS = [CharacterTool, RelationshipTool, EventTool, OutlineTool, ChapterTool, WorldSettingTool, NovelTool]
 
 _READONLY_ACTIONS = ["query", "list", "search"]
 _READONLY_ACTION_DESC = "操作类型：query(按ID查询), list(列出所有), search(按名称/描述模糊搜索)"

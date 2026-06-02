@@ -8,6 +8,7 @@ from astrbot_plugin_novel_generator.models import (
     Novel,
     Outline,
     Relationship,
+    chapter_display,
 )
 
 
@@ -109,13 +110,44 @@ class TestChapter:
         ch = Chapter()
         assert len(ch.id) == 8
         assert ch.number == 0
+        assert ch.order == 0.0
         assert ch.title == ""
         assert ch.content == ""
+        assert ch.label == ""
+        assert ch.is_extra is False
 
     def test_custom_values(self):
         ch = Chapter(number=1, title="开端", content="很久很久以前...")
         assert ch.number == 1
         assert ch.title == "开端"
+
+    def test_extra_chapter(self):
+        ch = Chapter(label="番外一·前传", is_extra=True, title="前传", order=2.5)
+        assert ch.label == "番外一·前传"
+        assert ch.is_extra is True
+        assert ch.order == 2.5
+
+
+class TestChapterDisplay:
+    def test_label_overrides_all(self):
+        ch = Chapter(number=1, label="序章", is_extra=False)
+        assert chapter_display(ch) == "序章"
+
+    def test_label_overrides_extra(self):
+        ch = Chapter(number=1, label="番外一·前传", is_extra=True)
+        assert chapter_display(ch) == "番外一·前传"
+
+    def test_extra_without_label(self):
+        ch = Chapter(number=0, is_extra=True, title="回忆")
+        assert chapter_display(ch) == "番外·回忆"
+
+    def test_normal_chapter(self):
+        ch = Chapter(number=5, is_extra=False)
+        assert chapter_display(ch) == "第5章"
+
+    def test_normal_chapter_no_label_no_extra(self):
+        ch = Chapter(number=1)
+        assert chapter_display(ch) == "第1章"
 
 
 class TestNovel:
@@ -130,6 +162,8 @@ class TestNovel:
         assert n.events == []
         assert n.outlines == []
         assert n.chapters == []
+        assert n.world_settings == []
+        assert n.synopsis == ""
 
     def test_custom_name(self):
         n = Novel(name="测试小说")
@@ -210,5 +244,6 @@ class TestNovel:
             "outlines",
             "chapters",
             "world_settings",
+            "synopsis",
         }
         assert set(d.keys()) == expected_keys
