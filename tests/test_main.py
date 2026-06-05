@@ -306,6 +306,7 @@ class TestNovelWrite:
         with patch("astrbot_plugin_novel_generator.main.ToolSet"):
             event = _make_event()
             gen = plugin.novel_write(event, requirement="写一段冒险故事")
+            await gen.__anext__()  # "正在创作中" prompt
             await gen.__anext__()
             context.tool_loop_agent.assert_called_once()
             call_kwargs = context.tool_loop_agent.call_args
@@ -350,6 +351,7 @@ class TestNovelAsk:
         with patch("astrbot_plugin_novel_generator.main.ToolSet") as mock_toolset:
             event = _make_event()
             gen = plugin.novel_ask(event, question="主角是谁")
+            await gen.__anext__()  # "正在思考中" prompt
             await gen.__anext__()
             context.tool_loop_agent.assert_called_once()
             call_kwargs = context.tool_loop_agent.call_args.kwargs

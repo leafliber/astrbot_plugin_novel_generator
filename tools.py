@@ -609,7 +609,7 @@ class ChapterTool(BaseNovelTool):
         "\n"
         "## 正文写入策略\n"
         "章节正文较长，必须分段写入：1) create 创建章节（content 留空或只写开头），"
-        "2) append_content 分段追加正文（每次约 500-800 字），"
+        "2) append_content 分段追加正文（每次约 1500-2500 字），"
         "3) update 修改元数据（update 不会修改 content）。切勿在单次调用中传入完整长文。\n"
         "\n"
         "## 排序机制\n"

@@ -161,7 +161,7 @@ class NovelGeneratorPlugin(Star):
 ## 章节正文写入（关键）
 章节正文较长，必须分段写入，否则会因参数长度限制导致内容丢失：
 - 用 manage_chapter 的 create 创建章节，content 留空或只写开头段落
-- 用 append_content 分段追加正文，每次约 500-800 字，写完一个完整的叙事段落或场景
+- 用 append_content 分段追加正文，每次约 1500-2500 字，写完一个完整的叙事段落或场景
 - 用 update 修改标题、状态、摘要等元数据（update 不会修改 content）
 - 切勿在单次工具调用中传入完整长篇正文
 
@@ -210,6 +210,21 @@ class NovelGeneratorPlugin(Star):
 - 如果需要回顾具体章节内容，用 manage_chapter 的 query 读取最近 1-2 章的完整正文
 - 特别注意：检查角色当前状态是否与之前章节一致，伏笔是否在后续得到合理回收
 """
+
+    _WRITE_HINTS = [
+        "正在创作中，请稍候...",
+        "灵感涌现中，请稍候...",
+        "笔墨正在挥洒...",
+        "故事正在展开...",
+        "构思中，请稍候...",
+        "正在伏案疾书...",
+    ]
+
+    _ASK_HINTS = [
+        "正在思考，请稍候...",
+        "翻阅书页中...",
+        "正在回忆故事细节...",
+    ]
 
     _READONLY_SYSTEM_PROMPT = """\
 你是一位专业的小说阅读助手，负责回答用户关于小说内容的问题。
@@ -281,6 +296,7 @@ class NovelGeneratorPlugin(Star):
                     recent.append(f"  {chapter_display(ch)} {ch.title}: {text}")
             if recent:
                 prompt += "\n\n最近章节回顾：\n" + "\n".join(recent)
+        yield event.plain_result(random.choice(self._WRITE_HINTS))
         llm_resp = await self._run_agent(event, novel, prompt)
         async for result in self._yield_segmented(event, llm_resp.completion_text):
             yield result
@@ -297,6 +313,7 @@ class NovelGeneratorPlugin(Star):
             return
         context_info = self._build_context_info(novel)
         prompt = f"{context_info}\n用户问题：{question}\n请基于小说内容回答，如需查看详细数据请使用工具查询。"
+        yield event.plain_result(random.choice(self._ASK_HINTS))
         llm_resp = await self._run_readonly_agent(event, novel, prompt)
         async for result in self._yield_segmented(event, llm_resp.completion_text):
             yield result
