@@ -99,7 +99,7 @@ class TestNOVELTOOLSList:
 class TestCharacterTool:
     @pytest.fixture
     def tool(self, storage):
-        return CharacterTool(storage=storage)
+        return CharacterTool(storage=storage, session_id="test_session")
 
     def test_name(self, tool):
         assert tool.name == "manage_character"
@@ -203,7 +203,7 @@ class TestCharacterTool:
     @pytest.mark.asyncio
     async def test_no_active_novel(self, storage):
         storage._kv_plugin.get_kv_data = AsyncMock(return_value=None)
-        tool = CharacterTool(storage=storage)
+        tool = CharacterTool(storage=storage, session_id="test_session")
         ctx = _make_context()
         result = await tool.call(ctx, action="list")
         assert "没有激活" in str(result)
@@ -225,7 +225,7 @@ class TestCharacterTool:
 class TestRelationshipTool:
     @pytest.fixture
     def tool(self, storage):
-        return RelationshipTool(storage=storage)
+        return RelationshipTool(storage=storage, session_id="test_session")
 
     def test_name(self, tool):
         assert tool.name == "manage_relationship"
@@ -308,7 +308,7 @@ class TestRelationshipTool:
     @pytest.mark.asyncio
     async def test_no_active_novel(self, storage):
         storage._kv_plugin.get_kv_data = AsyncMock(return_value=None)
-        tool = RelationshipTool(storage=storage)
+        tool = RelationshipTool(storage=storage, session_id="test_session")
         ctx = _make_context()
         result = await tool.call(ctx, action="list")
         assert "没有激活" in str(result)
@@ -317,7 +317,7 @@ class TestRelationshipTool:
 class TestEventTool:
     @pytest.fixture
     def tool(self, storage):
-        return EventTool(storage=storage)
+        return EventTool(storage=storage, session_id="test_session")
 
     def test_name(self, tool):
         assert tool.name == "manage_event"
@@ -389,7 +389,7 @@ class TestEventTool:
     @pytest.mark.asyncio
     async def test_no_active_novel(self, storage):
         storage._kv_plugin.get_kv_data = AsyncMock(return_value=None)
-        tool = EventTool(storage=storage)
+        tool = EventTool(storage=storage, session_id="test_session")
         ctx = _make_context()
         result = await tool.call(ctx, action="list")
         assert "没有激活" in str(result)
@@ -398,7 +398,7 @@ class TestEventTool:
 class TestOutlineTool:
     @pytest.fixture
     def tool(self, storage):
-        return OutlineTool(storage=storage)
+        return OutlineTool(storage=storage, session_id="test_session")
 
     def test_name(self, tool):
         assert tool.name == "manage_outline"
@@ -459,7 +459,7 @@ class TestOutlineTool:
     @pytest.mark.asyncio
     async def test_no_active_novel(self, storage):
         storage._kv_plugin.get_kv_data = AsyncMock(return_value=None)
-        tool = OutlineTool(storage=storage)
+        tool = OutlineTool(storage=storage, session_id="test_session")
         ctx = _make_context()
         result = await tool.call(ctx, action="list")
         assert "没有激活" in str(result)
@@ -468,7 +468,7 @@ class TestOutlineTool:
 class TestChapterTool:
     @pytest.fixture
     def tool(self, storage):
-        return ChapterTool(storage=storage)
+        return ChapterTool(storage=storage, session_id="test_session")
 
     def test_name(self, tool):
         assert tool.name == "manage_chapter"
@@ -528,7 +528,7 @@ class TestChapterTool:
     @pytest.mark.asyncio
     async def test_no_active_novel(self, storage):
         storage._kv_plugin.get_kv_data = AsyncMock(return_value=None)
-        tool = ChapterTool(storage=storage)
+        tool = ChapterTool(storage=storage, session_id="test_session")
         ctx = _make_context()
         result = await tool.call(ctx, action="list")
         assert "没有激活" in str(result)
@@ -537,7 +537,7 @@ class TestChapterTool:
 class TestChapterToolReorder:
     @pytest.fixture
     def tool(self, storage):
-        return ChapterTool(storage=storage)
+        return ChapterTool(storage=storage, session_id="test_session")
 
     @pytest.fixture
     def chapters_novel(self, storage, novel):
@@ -603,7 +603,7 @@ class TestChapterToolReorder:
 class TestChapterToolMove:
     @pytest.fixture
     def tool(self, storage):
-        return ChapterTool(storage=storage)
+        return ChapterTool(storage=storage, session_id="test_session")
 
     @pytest.fixture
     def chapters_novel(self, storage, novel):
@@ -709,7 +709,7 @@ class TestChapterToolMove:
 class TestChapterToolCreateExtras:
     @pytest.fixture
     def tool(self, storage):
-        return ChapterTool(storage=storage)
+        return ChapterTool(storage=storage, session_id="test_session")
 
     @pytest.mark.asyncio
     async def test_create_with_label_and_is_extra(self, tool, storage, novel):
@@ -749,7 +749,7 @@ class TestChapterToolCreateExtras:
 class TestNovelTool:
     @pytest.fixture
     def tool(self, storage):
-        return NovelTool(storage=storage)
+        return NovelTool(storage=storage, session_id="test_session")
 
     @pytest.mark.asyncio
     async def test_update_synopsis(self, tool, storage, novel):
@@ -770,7 +770,7 @@ class TestNovelTool:
     @pytest.mark.asyncio
     async def test_no_active_novel(self, storage):
         storage._kv_plugin.get_kv_data = AsyncMock(return_value=None)
-        tool = NovelTool(storage=storage)
+        tool = NovelTool(storage=storage, session_id="test_session")
         ctx = _make_context()
         result = await tool.call(ctx, action="update_synopsis", synopsis="test")
         assert "没有激活" in str(result)

@@ -25,6 +25,7 @@ def _next_chapter_order(novel: Novel) -> float:
 @dataclass
 class BaseNovelTool(FunctionTool[AstrAgentContext]):
     storage: Optional[NovelStorage] = field(default=None, repr=False)
+    session_id: str = ""
     _needs_content: ClassVar[bool] = False
 
     async def _get_novel(self, context: ContextWrapper[AstrAgentContext], *, load_content: bool | None = None) -> tuple[Optional[Novel], Optional[str]]:
@@ -32,7 +33,7 @@ class BaseNovelTool(FunctionTool[AstrAgentContext]):
             return None, "错误：存储未初始化。"
         lc = load_content if load_content is not None else self._needs_content
         novel = await self.storage.get_active_novel(
-            context.context.event.unified_msg_origin,
+            self.session_id,
             load_content=lc,
         )
         if novel is None:

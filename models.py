@@ -105,6 +105,8 @@ class Novel:
     outlines: list[Outline] = field(default_factory=list)
     chapters: list[Chapter] = field(default_factory=list)
     world_settings: list[WorldSetting] = field(default_factory=list)
+    owner_group_id: str = ""
+    owner_user_id: str = ""
     synopsis: str = ""
 
     def resolve_character_ref(self, ref: str) -> Character | None:
@@ -152,6 +154,8 @@ class Novel:
             chapters=chapters,
             world_settings=world_settings,
             synopsis=data.get("synopsis", ""),
+            owner_group_id=data.get("owner_group_id", ""),
+            owner_user_id=data.get("owner_user_id", ""),
         )
 
 

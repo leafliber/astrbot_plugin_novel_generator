@@ -245,5 +245,7 @@ class TestNovel:
             "chapters",
             "world_settings",
             "synopsis",
+            "owner_group_id",
+            "owner_user_id",
         }
         assert set(d.keys()) == expected_keys

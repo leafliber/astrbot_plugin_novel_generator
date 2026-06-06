@@ -110,6 +110,8 @@ class NovelStorage:
                         "updated_at": data.get("updated_at", ""),
                         "chapter_count": len(data.get("chapters", [])),
                         "character_count": len(data.get("characters", [])),
+                        "owner_group_id": data.get("owner_group_id", ""),
+                        "owner_user_id": data.get("owner_user_id", ""),
                     }
                 )
             except Exception as e:
@@ -126,6 +128,8 @@ class NovelStorage:
             "updated_at": novel.updated_at,
             "chapter_count": len(novel.chapters),
             "character_count": len(novel.characters),
+            "owner_group_id": novel.owner_group_id,
+            "owner_user_id": novel.owner_user_id,
         }
         found = False
         for i, entry in enumerate(entries):
@@ -264,16 +268,35 @@ class NovelStorage:
     async def list_novels(self) -> list[Novel]:
         return await asyncio.to_thread(self._list_novels_sync)
 
-    async def list_novel_summaries(self) -> list[dict]:
-        entries = await asyncio.to_thread(self._read_index_sync)
-        if not entries:
-            entries = await asyncio.to_thread(self._rebuild_index_sync)
-        return entries
+    @staticmethod
+    def _filter_entries(entries: list[dict], *, owner_group_id: str | None = None, owner_user_id: str | None = None) -> list[dict]:
+        if owner_group_id is None and owner_user_id is None:
+            return entries
+        filtered = []
+        for e in entries:
+            # Legacy novels without owner fields are visible to everyone
+            has_owner = e.get("owner_group_id") or e.get("owner_user_id")
+            if not has_owner:
+                filtered.append(e)
+                continue
+            if owner_group_id is not None and e.get("owner_group_id") == owner_group_id:
+                filtered.append(e)
+                continue
+            if owner_user_id is not None and e.get("owner_user_id") == owner_user_id:
+                filtered.append(e)
+        return filtered
 
-    async def find_novel_summary_by_name(self, name: str) -> Optional[dict]:
+    async def list_novel_summaries(self, *, owner_group_id: str | None = None, owner_user_id: str | None = None) -> list[dict]:
         entries = await asyncio.to_thread(self._read_index_sync)
         if not entries:
             entries = await asyncio.to_thread(self._rebuild_index_sync)
+        return self._filter_entries(entries, owner_group_id=owner_group_id, owner_user_id=owner_user_id)
+
+    async def find_novel_summary_by_name(self, name: str, *, owner_group_id: str | None = None, owner_user_id: str | None = None) -> Optional[dict]:
+        entries = await asyncio.to_thread(self._read_index_sync)
+        if not entries:
+            entries = await asyncio.to_thread(self._rebuild_index_sync)
+        entries = self._filter_entries(entries, owner_group_id=owner_group_id, owner_user_id=owner_user_id)
         name_lower = name.lower()
         # Exact match first
         for entry in entries:

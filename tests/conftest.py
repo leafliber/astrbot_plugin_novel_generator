@@ -35,6 +35,7 @@ class _MockFunctionTool(Generic[T]):
     description: str = ""
     parameters: dict = dataclasses.field(default_factory=dict)
     storage: object = None
+    session_id: str = ""
 
     async def call(self, context, **kwargs):
         raise NotImplementedError

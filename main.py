@@ -32,6 +32,14 @@ from .models import (
 from .storage import PLUGIN_NAME, NovelStorage
 from .tools import NOVEL_TOOLS, make_readonly_tools
 
+
+def compute_session_id(event: AstrMessageEvent, mode: str) -> str:
+    if mode == "user":
+        return f"user:{event.message_obj.sender.user_id}"
+    if mode == "none":
+        return "_global"
+    return event.unified_msg_origin
+
 _CRUD_CONFIG: dict[str, dict[str, Any]] = {
     "characters": {
         "model": Character,
@@ -86,7 +94,19 @@ class NovelGeneratorPlugin(Star):
         pass
 
     def _get_session_id(self, event: AstrMessageEvent) -> str:
-        return event.unified_msg_origin
+        mode = self.config.get("session_isolation", "group")
+        return compute_session_id(event, mode)
+
+    def _get_novel_filter(self, event: AstrMessageEvent) -> dict:
+        mode = self.config.get("session_isolation", "group")
+        if mode == "user":
+            return {"owner_user_id": event.message_obj.sender.user_id}
+        if mode == "none":
+            return {}
+        group_id = event.message_obj.group_id
+        if group_id:
+            return {"owner_group_id": group_id}
+        return {"owner_user_id": event.message_obj.sender.user_id}
 
     @filter.command_group("novel")
     def novel(self):
@@ -99,10 +119,15 @@ class NovelGeneratorPlugin(Star):
             yield event.plain_result("小说名称不能为空，请提供名称。")
             return
         session_id = self._get_session_id(event)
-        if await self.storage.find_novel_summary_by_name(name):
+        novel_filter = self._get_novel_filter(event)
+        if await self.storage.find_novel_summary_by_name(name, **novel_filter):
             yield event.plain_result(f"已存在名为「{name}」的小说，请使用其他名称。")
             return
-        novel = Novel(name=name)
+        novel = Novel(
+            name=name,
+            owner_group_id=event.message_obj.group_id,
+            owner_user_id=event.message_obj.sender.user_id,
+        )
         await self.storage.save_novel(novel)
         await self.storage.set_active_novel(session_id, novel.id)
         yield event.plain_result(
@@ -113,7 +138,8 @@ class NovelGeneratorPlugin(Star):
     async def novel_switch(self, event: AstrMessageEvent, name: str):
         """切换到指定小说"""
         session_id = self._get_session_id(event)
-        summary = await self.storage.find_novel_summary_by_name(name)
+        novel_filter = self._get_novel_filter(event)
+        summary = await self.storage.find_novel_summary_by_name(name, **novel_filter)
         if summary is None:
             yield event.plain_result(f"未找到名为「{name}」的小说。")
             return
@@ -124,8 +150,9 @@ class NovelGeneratorPlugin(Star):
     async def novel_list(self, event: AstrMessageEvent):
         """列出所有小说"""
         session_id = self._get_session_id(event)
+        novel_filter = self._get_novel_filter(event)
         active_id = await self.storage.get_active_novel_id(session_id)
-        summaries = await self.storage.list_novel_summaries()
+        summaries = await self.storage.list_novel_summaries(**novel_filter)
         if not summaries:
             yield event.plain_result("暂无小说，使用 /novel create 创建一本吧！")
             return
@@ -140,7 +167,8 @@ class NovelGeneratorPlugin(Star):
     async def novel_delete(self, event: AstrMessageEvent, name: str):
         """删除指定小说"""
         session_id = self._get_session_id(event)
-        summary = await self.storage.find_novel_summary_by_name(name)
+        novel_filter = self._get_novel_filter(event)
+        summary = await self.storage.find_novel_summary_by_name(name, **novel_filter)
         if summary is None:
             yield event.plain_result(f"未找到名为「{name}」的小说。")
             return
@@ -150,6 +178,51 @@ class NovelGeneratorPlugin(Star):
             await self.storage.remove_active_novel(session_id)
         await self.storage.delete_novel(target_id)
         yield event.plain_result(f"小说「{name}」已删除。")
+
+    @novel.command("transfer")
+    async def novel_transfer(self, event: AstrMessageEvent, name: str):
+        """转让小说所有权"""
+        session_id = self._get_session_id(event)
+        # Use user identity to find novels they personally own
+        user_id = event.message_obj.sender.user_id
+        summary = await self.storage.find_novel_summary_by_name(name, owner_user_id=user_id)
+        if summary is None:
+            yield event.plain_result(f"未找到名为「{name}」的小说。")
+            return
+
+        mode = self.config.get("session_isolation", "group")
+        target_user_id = None
+        for comp in event.message_obj.message:
+            if hasattr(comp, "qq"):
+                target_user_id = comp.qq
+                break
+
+        novel = await self.storage.load_novel(summary["id"], load_content=False)
+        if novel is None:
+            yield event.plain_result(f"小说「{name}」加载失败。")
+            return
+
+        if mode == "user":
+            if not target_user_id:
+                yield event.plain_result("用户隔离模式下需要 @mention 目标用户。")
+                return
+            novel.owner_user_id = target_user_id
+            msg = f"小说「{name}」已转让。"
+        else:
+            group_id = event.message_obj.group_id
+            if group_id:
+                novel.owner_group_id = group_id
+            else:
+                novel.owner_user_id = event.message_obj.sender.user_id
+            msg = f"小说「{name}」已转让到当前{'群聊' if group_id else '会话'}。"
+
+        await self.storage.save_novel(novel)
+
+        active_novel_id = await self.storage.get_active_novel_id(session_id)
+        if active_novel_id and active_novel_id == novel.id:
+            await self.storage.remove_active_novel(session_id)
+
+        yield event.plain_result(msg)
 
     _SYSTEM_PROMPT = """\
 你是一位专业的小说创作助手，负责使用工具来管理和创作小说的结构化数据。
@@ -257,8 +330,9 @@ class NovelGeneratorPlugin(Star):
     ):
         umo = event.unified_msg_origin
         prov_id = self.config.get("provider_id", "") or await self.context.get_current_chat_provider_id(umo=umo)
+        session_id = self._get_session_id(event)
         if tools is None:
-            tools = ToolSet([t(storage=self.storage) for t in NOVEL_TOOLS])
+            tools = ToolSet([t(storage=self.storage, session_id=session_id) for t in NOVEL_TOOLS])
         if system_prompt is None:
             custom_prompt = self.config.get("novel_system_prompt", "")
             system_prompt = custom_prompt if custom_prompt else self._SYSTEM_PROMPT
@@ -277,7 +351,8 @@ class NovelGeneratorPlugin(Star):
     async def _run_readonly_agent(
         self, event: AstrMessageEvent, novel: Novel, prompt: str
     ):
-        tools = ToolSet([t(storage=self.storage) for t in make_readonly_tools()])
+        session_id = self._get_session_id(event)
+        tools = ToolSet([t(storage=self.storage, session_id=session_id) for t in make_readonly_tools()])
         return await self._run_agent(
             event, novel, prompt,
             system_prompt=self._READONLY_SYSTEM_PROMPT,

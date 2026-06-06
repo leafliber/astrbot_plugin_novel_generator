@@ -17,9 +17,13 @@ def tmp_data_base(tmp_path):
     return tmp_path
 
 
-def _make_event(session_id="test_session"):
+def _make_event(session_id="test_session", user_id="test_user", group_id=""):
     event = MagicMock()
     event.unified_msg_origin = session_id
+    event.message_obj = MagicMock()
+    event.message_obj.group_id = group_id
+    event.message_obj.sender = MagicMock()
+    event.message_obj.sender.user_id = user_id
     event.plain_result = MagicMock(return_value=MagicMock())
     return event
 
@@ -41,6 +45,7 @@ def _make_config():
                 "tool_call_timeout": 60,
                 "segment_max_length": 2000,
                 "segment_delay": 5,
+                "session_isolation": "group",
             }.get(key, default)
         )
     )
@@ -495,20 +500,6 @@ class TestWebAPIRegistration:
         assert any("chapters" in p for p in registered_paths)
 
 
-class TestGetSessionId:
-    @pytest.mark.asyncio
-    async def test_session_id(self, tmp_data_base):
-        storage = _make_storage(tmp_data_base)
-        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
-
-        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
-            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
-        plugin.storage = storage
-        plugin.config = _make_config()
-        event = _make_event(session_id="group_123")
-        assert plugin._get_session_id(event) == "group_123"
-
-
 class TestSplitText:
     def test_short_text_returns_single_segment(self):
         from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
@@ -689,3 +680,216 @@ class TestBuildContextInfo:
         novel = Novel(name="测试", characters=[c])
         info = self.Plugin._build_context_info(novel)
         assert "北方小村" in info
+
+
+class TestComputeSessionId:
+    def test_group_mode_returns_unified_msg_origin(self):
+        from astrbot_plugin_novel_generator.main import compute_session_id
+        event = _make_event(session_id="aiocqhttp:GroupMessage:Group:123:qq")
+        assert compute_session_id(event, "group") == "aiocqhttp:GroupMessage:Group:123:qq"
+
+    def test_user_mode_returns_user_prefix(self):
+        from astrbot_plugin_novel_generator.main import compute_session_id
+        event = _make_event(user_id="user_abc")
+        assert compute_session_id(event, "user") == "user:user_abc"
+
+    def test_none_mode_returns_global(self):
+        from astrbot_plugin_novel_generator.main import compute_session_id
+        event = _make_event()
+        assert compute_session_id(event, "none") == "_global"
+
+    def test_unknown_mode_defaults_to_group(self):
+        from astrbot_plugin_novel_generator.main import compute_session_id
+        event = _make_event(session_id="group:123")
+        assert compute_session_id(event, "unknown") == "group:123"
+
+
+class TestGetSessionId:
+    @pytest.mark.asyncio
+    async def test_session_id_default_group(self, tmp_data_base):
+        storage = _make_storage(tmp_data_base)
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
+            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
+        plugin.storage = storage
+        plugin.config = _make_config()
+        event = _make_event(session_id="group_123")
+        assert plugin._get_session_id(event) == "group_123"
+
+    @pytest.mark.asyncio
+    async def test_session_id_user_mode(self, tmp_data_base):
+        storage = _make_storage(tmp_data_base)
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
+            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
+        plugin.storage = storage
+        config = MagicMock(
+            get=MagicMock(side_effect=lambda k, d=None: {"session_isolation": "user"}.get(k, d))
+        )
+        plugin.config = config
+        event = _make_event(session_id="group_123", user_id="user_xyz")
+        assert plugin._get_session_id(event) == "user:user_xyz"
+
+    @pytest.mark.asyncio
+    async def test_session_id_none_mode(self, tmp_data_base):
+        storage = _make_storage(tmp_data_base)
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
+            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
+        plugin.storage = storage
+        config = MagicMock(
+            get=MagicMock(side_effect=lambda k, d=None: {"session_isolation": "none"}.get(k, d))
+        )
+        plugin.config = config
+        event = _make_event(session_id="group_123")
+        assert plugin._get_session_id(event) == "_global"
+
+
+class TestGetNovelFilter:
+    @pytest.fixture
+    def plugin(self, tmp_data_base):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+        storage = _make_storage(tmp_data_base)
+        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
+            p = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
+        p.storage = storage
+        p.config = _make_config()
+        return p
+
+    def test_group_mode_with_group_id(self, plugin):
+        event = _make_event(group_id="group_123")
+        f = plugin._get_novel_filter(event)
+        assert f == {"owner_group_id": "group_123"}
+
+    def test_group_mode_private_chat(self, plugin):
+        event = _make_event(user_id="user_abc", group_id="")
+        f = plugin._get_novel_filter(event)
+        assert f == {"owner_user_id": "user_abc"}
+
+    def test_user_mode(self, plugin):
+        plugin.config = MagicMock(
+            get=MagicMock(side_effect=lambda k, d=None: {"session_isolation": "user"}.get(k, d))
+        )
+        event = _make_event(user_id="user_abc")
+        f = plugin._get_novel_filter(event)
+        assert f == {"owner_user_id": "user_abc"}
+
+    def test_none_mode(self, plugin):
+        plugin.config = MagicMock(
+            get=MagicMock(side_effect=lambda k, d=None: {"session_isolation": "none"}.get(k, d))
+        )
+        event = _make_event()
+        f = plugin._get_novel_filter(event)
+        assert f == {}
+
+
+class TestNovelTransfer:
+    @pytest.fixture
+    def plugin(self, tmp_data_base):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+        storage = NovelStorage(tmp_data_base)
+        mock_kv = MagicMock()
+        mock_kv.get_kv_data = AsyncMock(return_value=None)
+        mock_kv.put_kv_data = AsyncMock()
+        mock_kv.delete_kv_data = AsyncMock()
+        storage.set_kv_plugin(mock_kv)
+        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
+            p = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
+        p.storage = storage
+        p.config = _make_config()
+        return p
+
+    @pytest.mark.asyncio
+    async def test_user_mode_with_at(self, plugin, tmp_data_base):
+        plugin.config = MagicMock(
+            get=MagicMock(side_effect=lambda k, d=None: {"session_isolation": "user"}.get(k, d))
+        )
+        novel = Novel(name="测试转移", owner_user_id="user_a")
+        await plugin.storage.save_novel(novel)
+
+        at_mock = MagicMock(spec=[])
+        at_mock.qq = "user_b"
+        event = _make_event(user_id="user_a")
+        event.message_obj.message = [MagicMock(spec=[]), at_mock]
+        results = []
+        async for r in plugin.novel_transfer(event, "测试转移"):
+            results.append(r)
+        transferred = await plugin.storage.load_novel(novel.id, load_content=False)
+        assert transferred.owner_user_id == "user_b"
+
+    @pytest.mark.asyncio
+    async def test_user_mode_without_at_error(self, plugin, tmp_data_base):
+        plugin.config = MagicMock(
+            get=MagicMock(side_effect=lambda k, d=None: {"session_isolation": "user"}.get(k, d))
+        )
+        novel = Novel(name="测试转移", owner_user_id="user_a")
+        await plugin.storage.save_novel(novel)
+
+        event = _make_event(user_id="user_a")
+        event.message_obj.message = [MagicMock(spec=[])]  # no 'qq' attribute
+        results = []
+        async for r in plugin.novel_transfer(event, "测试转移"):
+            results.append(r)
+        assert "需要 @mention" in event.plain_result.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_group_mode_in_group(self, plugin, tmp_data_base):
+        novel = Novel(name="测试转移", owner_user_id="user_a", owner_group_id="group_old")
+        await plugin.storage.save_novel(novel)
+
+        event = _make_event(user_id="user_a", group_id="group_new")
+        event.message_obj.message = []
+        results = []
+        async for r in plugin.novel_transfer(event, "测试转移"):
+            results.append(r)
+        transferred = await plugin.storage.load_novel(novel.id, load_content=False)
+        assert transferred.owner_group_id == "group_new"
+
+    @pytest.mark.asyncio
+    async def test_none_mode(self, plugin, tmp_data_base):
+        plugin.config = MagicMock(
+            get=MagicMock(side_effect=lambda k, d=None: {"session_isolation": "none"}.get(k, d))
+        )
+        novel = Novel(name="测试转移", owner_user_id="user_a")
+        await plugin.storage.save_novel(novel)
+
+        event = _make_event(user_id="user_a", group_id="group_new")
+        event.message_obj.message = []
+        results = []
+        async for r in plugin.novel_transfer(event, "测试转移"):
+            results.append(r)
+        transferred = await plugin.storage.load_novel(novel.id, load_content=False)
+        assert transferred.owner_group_id == "group_new"
+
+    @pytest.mark.asyncio
+    async def test_not_found(self, plugin, tmp_data_base):
+        event = _make_event(user_id="user_a")
+        event.message_obj.message = []
+        results = []
+        async for r in plugin.novel_transfer(event, "不存在的小说"):
+            results.append(r)
+        assert "未找到" in event.plain_result.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_clears_active_after_transfer(self, plugin, tmp_data_base):
+        plugin.config = MagicMock(
+            get=MagicMock(side_effect=lambda k, d=None: {"session_isolation": "user"}.get(k, d))
+        )
+        novel = Novel(name="测试转移", owner_user_id="user_a")
+        await plugin.storage.save_novel(novel)
+
+        at_mock = MagicMock()
+        at_mock.qq = "user_b"
+        event = _make_event(user_id="user_a")
+        event.message_obj.message = [at_mock]
+
+        plugin.storage._kv_plugin.get_kv_data = AsyncMock(return_value=novel.id)
+        plugin.storage._kv_plugin.delete_kv_data = AsyncMock()
+
+        results = []
+        async for r in plugin.novel_transfer(event, "测试转移"):
+            results.append(r)
+        plugin.storage._kv_plugin.delete_kv_data.assert_called_once()
