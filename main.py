@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import dataclasses
+import os
 import random
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -582,8 +583,11 @@ class NovelGeneratorPlugin(Star):
             filename = f"{novel.name}_全本.txt"
 
         safe_filename = filename.replace("/", "_").replace("\\", "_")
-        b64 = base64.b64encode(content.encode("utf-8")).decode("utf-8")
-        chain = [Comp.File(file=f"base64://{b64}", name=safe_filename)]
+        tmp_dir = Path(tempfile.gettempdir()) / "astrbot_novel"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp_path = tmp_dir / safe_filename
+        tmp_path.write_text(content, encoding="utf-8")
+        chain = [Comp.File(name=safe_filename, file=str(tmp_path))]
         yield event.chain_result(chain)
 
     def _register_web_apis(self):

@@ -1,7 +1,7 @@
 name: astrbot_plugin_novel_generator
-desc: 一个基于 AstrBot Agent 的小说创作与管理插件
+desc: 一个基于 AstrBot Agent 的小说创作与管理插件，自主管理角色、大纲、章节等结构化数据
 version: 0.2.0
 author: Leafiber
 display_name: 小说创作Agent
-short_desc: AI 驱动的小说创作助手，Agent 自主管理角色、大纲、章节等结构化数据
+short_desc: AI 驱动的小说创作助手
 repo: https://github.com/leafliber/astrbot_plugin_novel_generator
