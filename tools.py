@@ -25,12 +25,13 @@ class BaseNovelTool(FunctionTool[AstrAgentContext]):
     storage: Optional[NovelStorage] = field(default=None, repr=False)
     _needs_content: ClassVar[bool] = False
 
-    async def _get_novel(self, context: ContextWrapper[AstrAgentContext]) -> tuple[Optional[Novel], Optional[str]]:
+    async def _get_novel(self, context: ContextWrapper[AstrAgentContext], *, load_content: bool | None = None) -> tuple[Optional[Novel], Optional[str]]:
         if self.storage is None:
             return None, "错误：存储未初始化。"
+        lc = load_content if load_content is not None else self._needs_content
         novel = await self.storage.get_active_novel(
             context.context.event.unified_msg_origin,
-            load_content=self._needs_content,
+            load_content=lc,
         )
         if novel is None:
             return None, "错误：当前没有激活的小说。"
@@ -38,6 +39,10 @@ class BaseNovelTool(FunctionTool[AstrAgentContext]):
 
     async def _save(self, novel: Novel) -> None:
         await self.storage.save_novel(novel, save_content=self._needs_content)
+
+    @staticmethod
+    def _editable_kwargs(model_cls: type, kwargs: dict) -> dict:
+        return {k: v for k, v in kwargs.items() if k in model_cls.EDITABLE_FIELDS}
 
 
 @dataclass
@@ -124,7 +129,7 @@ class CharacterTool(BaseNovelTool):
             cid = kwargs.get("character_id", "")
             for c in novel.characters:
                 if c.id == cid:
-                    c.apply_updates(kwargs)
+                    c.apply_updates(self._editable_kwargs(Character, kwargs))
                     await self._save(novel)
                     return f"角色「{c.name}」已更新"
             return f"未找到ID为 {cid} 的角色"
@@ -267,7 +272,7 @@ class RelationshipTool(BaseNovelTool):
                     if "character_b" in kwargs:
                         id_b = novel.resolve_character_id(kwargs["character_b"])
                         if not id_b:
-                            return f"错误：未找到角色「{kwargs['character_b']}。"
+                            return f"错误：未找到角色「{kwargs['character_b']}」。"
                         resolved["character_b"] = id_b
                     for k in ("relation_type", "description"):
                         if k in kwargs:
@@ -552,7 +557,7 @@ class OutlineTool(BaseNovelTool):
             oid = kwargs.get("outline_id", "")
             for o in novel.outlines:
                 if o.id == oid:
-                    o.apply_updates(kwargs)
+                    o.apply_updates(self._editable_kwargs(Outline, kwargs))
                     await self._save(novel)
                     return f"大纲「{o.title}」已更新"
             return f"未找到ID为 {oid} 的大纲"
@@ -699,10 +704,11 @@ class ChapterTool(BaseNovelTool):
     async def call(
         self, context: ContextWrapper[AstrAgentContext], **kwargs
     ) -> ToolExecResult:
-        novel, err = await self._get_novel(context)
+        action = kwargs.get("action", "")
+        load = False if action in ("list", "search") else None
+        novel, err = await self._get_novel(context, load_content=load)
         if err:
             return err
-        action = kwargs.get("action", "")
         if action == "create":
             ch_number = kwargs.get("number", _next_chapter_number(novel))
             ch_order = kwargs.get("order", _next_chapter_order(novel))
@@ -747,7 +753,7 @@ class ChapterTool(BaseNovelTool):
             cid = kwargs.get("chapter_id", "")
             for ch in novel.chapters:
                 if ch.id == cid:
-                    ch.apply_updates(kwargs)
+                    ch.apply_updates(self._editable_kwargs(Chapter, kwargs))
                     novel.chapters.sort(key=lambda x: x.order)
                     await self._save(novel)
                     display = chapter_display(ch)
@@ -965,7 +971,7 @@ class WorldSettingTool(BaseNovelTool):
             sid = kwargs.get("setting_id", "")
             for ws in novel.world_settings:
                 if ws.id == sid:
-                    ws.apply_updates(kwargs)
+                    ws.apply_updates(self._editable_kwargs(WorldSetting, kwargs))
                     await self._save(novel)
                     return f"世界观设定「{ws.name}」已更新"
             return f"未找到ID为 {sid} 的世界观设定"
@@ -1054,14 +1060,22 @@ _READONLY_ACTION_DESC = "操作类型：query(按ID查询), list(列出所有), 
 
 
 def _make_readonly_cls(cls: type[BaseNovelTool]) -> type[BaseNovelTool]:
-    """Return a subclass with parameters patched to only expose read-only actions."""
-    # parameters is a dataclass field with default_factory, get default from field metadata
+    """Return a subclass with parameters patched to only expose read-only actions and params."""
     params = cls.__dataclass_fields__["parameters"].default_factory().copy()
     props = params["properties"].copy()
     action = props["action"].copy()
     action["enum"] = _READONLY_ACTIONS
     action["description"] = _READONLY_ACTION_DESC
     props["action"] = action
+
+    # Strip write-only parameters — keep only action, *_id, keyword, chapter_ids
+    read_only_param_names = {"action"}
+    for pname, pval in props.items():
+        if pname == "action":
+            continue
+        if pname.endswith("_id") or pname == "keyword" or pname == "chapter_ids":
+            read_only_param_names.add(pname)
+    props = {k: v for k, v in props.items() if k in read_only_param_names}
     params["properties"] = props
 
     original_desc = cls.__dataclass_fields__["description"].default

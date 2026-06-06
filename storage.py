@@ -138,10 +138,13 @@ class NovelStorage:
         entries = [e for e in entries if e.get("id") != novel_id]
         self._write_index_sync(entries)
 
-    def _chapters_dir(self, novel_id: str) -> Path:
+    def _ensure_chapters_dir(self, novel_id: str) -> Path:
         d = self._novels_dir / novel_id
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    def _chapters_dir(self, novel_id: str) -> Path:
+        return self._novels_dir / novel_id
 
     def _chapter_path(self, novel_id: str, chapter_id: str) -> Path:
         return self._chapters_dir(novel_id) / f"{chapter_id}.txt"
@@ -149,12 +152,19 @@ class NovelStorage:
     def _save_novel_sync(self, novel: Novel, save_content: bool = True):
         novel.updated_at = datetime.now().isoformat()
         if save_content:
-            chapters_dir = self._chapters_dir(novel.id)
+            chapters_dir = self._ensure_chapters_dir(novel.id)
+            active_ids = {ch.id for ch in novel.chapters}
             for ch in novel.chapters:
-                ch_path = self._chapter_path(novel.id, ch.id)
+                ch.content_length = len(ch.content)
+                ch_path = chapters_dir / f"{ch.id}.txt"
                 tmp_ch = ch_path.with_suffix(".tmp")
                 tmp_ch.write_text(ch.content, encoding="utf-8")
                 os.replace(tmp_ch, ch_path)
+            # Remove orphaned chapter files (deleted chapters)
+            if chapters_dir.exists():
+                for f in chapters_dir.iterdir():
+                    if f.suffix == ".txt" and f.stem not in active_ids:
+                        f.unlink(missing_ok=True)
         novel_dict = novel.to_dict()
         for ch_dict in novel_dict.get("chapters", []):
             ch_dict.pop("content", None)
@@ -176,7 +186,9 @@ class NovelStorage:
                 ch_id = ch_dict.get("id", "")
                 ch_path = self._chapter_path(novel_id, ch_id)
                 if ch_path.exists():
-                    ch_dict["content"] = ch_path.read_text(encoding="utf-8")
+                    content = ch_path.read_text(encoding="utf-8")
+                    ch_dict["content"] = content
+                    ch_dict["content_length"] = len(content)
                 else:
                     ch_dict["content"] = ch_dict.get("content", "")
         return Novel.from_dict(data)

@@ -6,6 +6,7 @@ import os
 import random
 import re
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -113,17 +114,16 @@ class NovelGeneratorPlugin(Star):
     async def novel_list(self, event: AstrMessageEvent):
         """列出所有小说"""
         session_id = self._get_session_id(event)
-        active_novel = await self.storage.get_active_novel(session_id)
-        active_id = active_novel.id if active_novel else None
-        novels = await self.storage.list_novels()
-        if not novels:
+        active_id = await self.storage._get_active_novel_id(session_id)
+        summaries = await self.storage.list_novel_summaries()
+        if not summaries:
             yield event.plain_result("暂无小说，使用 /novel create 创建一本吧！")
             return
         lines = ["📖 小说列表："]
-        for n in novels:
-            marker = " ✅ [当前]" if n.id == active_id else ""
-            ch_count = len(n.chapters)
-            lines.append(f"  • {n.name}（{ch_count} 章）{marker}")
+        for s in summaries:
+            marker = " ✅ [当前]" if s.get("id") == active_id else ""
+            ch_count = s.get("chapter_count", 0)
+            lines.append(f"  • {s['name']}（{ch_count} 章）{marker}")
         yield event.plain_result("\n".join(lines))
 
     @novel.command("delete")
@@ -237,22 +237,28 @@ class NovelGeneratorPlugin(Star):
 4. 如果用户的问题涉及创作建议或修改要求，请告知用户使用 /novel write 命令"""
 
     async def _run_agent(
-        self, event: AstrMessageEvent, novel: Novel, prompt: str, *, system_prompt: str | None = None
+        self,
+        event: AstrMessageEvent,
+        novel: Novel,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        tools: ToolSet | None = None,
     ):
         umo = event.unified_msg_origin
         prov_id = self.config.get("provider_id", "") or await self.context.get_current_chat_provider_id(umo=umo)
-        tools = ToolSet([t(storage=self.storage) for t in NOVEL_TOOLS])
-        resolved_system_prompt = system_prompt if system_prompt is not None else None
-        if resolved_system_prompt is None:
+        if tools is None:
+            tools = ToolSet([t(storage=self.storage) for t in NOVEL_TOOLS])
+        if system_prompt is None:
             custom_prompt = self.config.get("novel_system_prompt", "")
-            resolved_system_prompt = custom_prompt if custom_prompt else self._SYSTEM_PROMPT
+            system_prompt = custom_prompt if custom_prompt else self._SYSTEM_PROMPT
         max_steps = self.config.get("max_agent_steps", 30)
         timeout = self.config.get("tool_call_timeout", 60)
         return await self.context.tool_loop_agent(
             event=event,
             chat_provider_id=prov_id,
             prompt=prompt,
-            system_prompt=resolved_system_prompt,
+            system_prompt=system_prompt,
             tools=tools,
             max_steps=max_steps,
             tool_call_timeout=timeout,
@@ -261,19 +267,11 @@ class NovelGeneratorPlugin(Star):
     async def _run_readonly_agent(
         self, event: AstrMessageEvent, novel: Novel, prompt: str
     ):
-        umo = event.unified_msg_origin
-        prov_id = self.config.get("provider_id", "") or await self.context.get_current_chat_provider_id(umo=umo)
         tools = ToolSet([t(storage=self.storage) for t in make_readonly_tools()])
-        max_steps = self.config.get("max_agent_steps", 30)
-        timeout = self.config.get("tool_call_timeout", 60)
-        return await self.context.tool_loop_agent(
-            event=event,
-            chat_provider_id=prov_id,
-            prompt=prompt,
+        return await self._run_agent(
+            event, novel, prompt,
             system_prompt=self._READONLY_SYSTEM_PROMPT,
             tools=tools,
-            max_steps=max_steps,
-            tool_call_timeout=timeout,
         )
 
     @novel.command("write")
@@ -323,67 +321,85 @@ class NovelGeneratorPlugin(Star):
     def _build_context_info(novel: Novel) -> str:
         max_field = 300
         max_total = 8000
-        parts = [f"当前小说：「{novel.name}」"]
+
+        def _truncate(text: str, limit: int) -> str:
+            return text[:limit] + "…" if len(text) > limit else text
+
+        # Build sections in priority order; chapters and synopsis are most important.
+        sections: list[tuple[str, int]] = []  # (text, min_budget)
+        header = f"当前小说：「{novel.name}」"
+        used = len(header) + 1  # +1 for the \n join
 
         if novel.synopsis:
-            parts.append(f"故事梗概：{novel.synopsis}")
+            sections.append((f"故事梗概：{novel.synopsis}", 0))
+
+        if novel.chapters:
+            sorted_chapters = sorted(novel.chapters, key=lambda x: x.order)
+            ch_lines = []
+            for ch in sorted_chapters:
+                if ch.summary:
+                    ch_lines.append(f"  {chapter_display(ch)} {ch.title}: {ch.summary}")
+                elif ch.content:
+                    ch_lines.append(f"  {chapter_display(ch)} {ch.title}: {_truncate(ch.content, 120)}...")
+                else:
+                    ch_lines.append(f"  {chapter_display(ch)} {ch.title}: （空）")
+            sections.append((f"章节（{len(sorted_chapters)}章）：\n" + "\n".join(ch_lines), 50))
 
         if novel.characters:
             char_lines = []
             for c in novel.characters:
-                bg = f" | 背景: {c.background[:max_field]}" if c.background else ""
-                char_lines.append(f"  • {c.name}(ID:{c.id}): {c.personality[:max_field] if c.personality else '无性格描述'}{bg}")
-            parts.append(f"角色（{len(novel.characters)}个）：\n" + "\n".join(char_lines))
+                bg = f" | 背景: {_truncate(c.background, max_field)}" if c.background else ""
+                char_lines.append(f"  • {c.name}(ID:{c.id}): {_truncate(c.personality, max_field) if c.personality else '无性格描述'}{bg}")
+            sections.append((f"角色（{len(novel.characters)}个）：\n" + "\n".join(char_lines), 0))
 
         if novel.relationships:
             rel_lines = []
             for r in novel.relationships:
                 name_a = novel.character_name_by_id(r.character_a)
                 name_b = novel.character_name_by_id(r.character_b)
-                desc = f": {r.description[:max_field]}" if r.description else ""
+                desc = f": {_truncate(r.description, max_field)}" if r.description else ""
                 rel_lines.append(f"  • {name_a} ↔ {name_b}(ID:{r.id}) [{r.relation_type}]{desc}")
-            parts.append(f"关系（{len(novel.relationships)}条）：\n" + "\n".join(rel_lines))
+            sections.append((f"关系（{len(novel.relationships)}条）：\n" + "\n".join(rel_lines), 0))
 
         if novel.outlines:
             out_lines = []
             for o in novel.outlines:
-                plan = f" | 规划: {o.chapter_plan[:max_field]}" if o.chapter_plan else ""
-                out_lines.append(f"  • {o.title}: 走向={o.plot_direction[:max_field] if o.plot_direction else '无'}{plan}")
-            parts.append(f"大纲（{len(novel.outlines)}条）：\n" + "\n".join(out_lines))
+                plan = f" | 规划: {_truncate(o.chapter_plan, max_field)}" if o.chapter_plan else ""
+                out_lines.append(f"  • {o.title}: 走向={_truncate(o.plot_direction, max_field) if o.plot_direction else '无'}{plan}")
+            sections.append((f"大纲（{len(novel.outlines)}条）：\n" + "\n".join(out_lines)), 0)
 
         if novel.world_settings:
             ws_lines = []
             for ws in novel.world_settings:
-                ws_lines.append(f"  • [{ws.category}] {ws.name}: {ws.description[:max_field] if ws.description else '无描述'}")
-            parts.append(f"世界观设定（{len(novel.world_settings)}条）：\n" + "\n".join(ws_lines))
+                ws_lines.append(f"  • [{ws.category}] {ws.name}: {_truncate(ws.description, max_field) if ws.description else '无描述'}")
+            sections.append((f"世界观设定（{len(novel.world_settings)}条）：\n" + "\n".join(ws_lines)), 0)
 
         if novel.events:
             evt_lines = []
             for e in novel.events:
                 char_names = [novel.character_name_by_id(c) for c in e.involved_characters]
                 chars = ", ".join(char_names) if char_names else "无"
-                desc = f": {e.description[:max_field]}" if e.description else ""
+                desc = f": {_truncate(e.description, max_field)}" if e.description else ""
                 evt_lines.append(f"  • {e.name}[{e.timeline_position}](涉及:{chars}){desc}")
-            parts.append(f"事件（{len(novel.events)}个）：\n" + "\n".join(evt_lines))
+            sections.append((f"事件（{len(novel.events)}个）：\n" + "\n".join(evt_lines)), 0)
 
-        if novel.chapters:
-            ch_lines = []
-            for ch in novel.chapters:
-                if ch.summary:
-                    ch_lines.append(f"  {chapter_display(ch)} {ch.title}: {ch.summary}")
-                elif ch.content:
-                    preview = ch.content[:120] + "..."
-                    ch_lines.append(f"  {chapter_display(ch)} {ch.title}: {preview}")
-                else:
-                    ch_lines.append(f"  {chapter_display(ch)} {ch.title}: （空）")
-            parts.append(f"章节（{len(novel.chapters)}章）：\n" + "\n".join(ch_lines))
-        else:
-            parts.append("章节：暂无")
-
-        result = "\n".join(parts) + "\n"
-        if len(result) > max_total:
-            result = result[:max_total] + "\n...（内容过长已截断，请使用工具查询完整数据）\n"
-        return result
+        # Allocate remaining budget across sections, respecting min_budget
+        remaining = max_total - used
+        result_parts = [header]
+        suffix_min = [0] * (len(sections) + 1)
+        for i in range(len(sections) - 1, -1, -1):
+            suffix_min[i] = suffix_min[i + 1] + sections[i][1]
+        for idx, (text, min_budget) in enumerate(sections):
+            budget = max(min_budget, remaining - suffix_min[idx + 1])
+            budget = max(budget, 0)
+            if len(text) <= budget:
+                result_parts.append(text)
+                remaining -= len(text) + 1
+            elif budget > 50:
+                result_parts.append(text[:budget] + "\n…（已截断，请使用工具查询完整数据）")
+                remaining = 0
+            # else: skip section entirely when budget is too small
+        return "\n".join(result_parts) + "\n"
 
     @staticmethod
     def _split_text(text: str, max_length: int = 2000, header: str | None = None) -> list[str]:
@@ -409,7 +425,7 @@ class NovelGeneratorPlugin(Star):
             raw_segments.append(current)
 
         # Pass 2: split oversized segments by sentence boundaries
-        sentence_pat = re.compile(r".*?[。！？…~”」）\n]+|.+$")
+        sentence_pat = re.compile(r".*?[。！？…~”」）\n?\!]+|.+$")
         final_segments: list[str] = []
         for seg in raw_segments:
             if len(seg) <= effective_max:
@@ -467,13 +483,13 @@ class NovelGeneratorPlugin(Star):
     async def novel_read(self, event: AstrMessageEvent, chapter_number: int = 0):
         """阅读小说，可指定章节号"""
         session_id = self._get_session_id(event)
-        novel = await self.storage.get_active_novel(session_id)
-        if novel is None:
-            yield event.plain_result(
-                "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
-            )
-            return
         if chapter_number > 0:
+            novel = await self.storage.get_active_novel(session_id)
+            if novel is None:
+                yield event.plain_result(
+                    "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
+                )
+                return
             for ch in novel.chapters:
                 if ch.number == chapter_number:
                     display = chapter_display(ch)
@@ -484,6 +500,12 @@ class NovelGeneratorPlugin(Star):
                     return
             yield event.plain_result(f"未找到第{chapter_number}章。")
         else:
+            novel = await self.storage.get_active_novel(session_id, load_content=False)
+            if novel is None:
+                yield event.plain_result(
+                    "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
+                )
+                return
             lines = [f"📖 「{novel.name}」概览"]
             lines.append(f"角色：{len(novel.characters)} 个")
             lines.append(f"关系：{len(novel.relationships)} 条")
@@ -503,7 +525,7 @@ class NovelGeneratorPlugin(Star):
                     lines.append(f"  • [{ws.category}] {ws.name}")
             if novel.chapters:
                 lines.append("\n章节目录：")
-                for ch in novel.chapters:
+                for ch in sorted(novel.chapters, key=lambda x: x.order):
                     lines.append(f"  {chapter_display(ch)} {ch.title}")
             async for result in self._yield_segmented(event, "\n".join(lines)):
                 yield result
@@ -512,7 +534,7 @@ class NovelGeneratorPlugin(Star):
     async def novel_chapters(self, event: AstrMessageEvent):
         """列出所有章节"""
         session_id = self._get_session_id(event)
-        novel = await self.storage.get_active_novel(session_id)
+        novel = await self.storage.get_active_novel(session_id, load_content=False)
         if novel is None:
             yield event.plain_result(
                 "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
@@ -522,8 +544,8 @@ class NovelGeneratorPlugin(Star):
             yield event.plain_result("当前小说暂无章节，使用 /novel write 开始创作吧！")
             return
         lines = [f"📚 「{novel.name}」章节列表："]
-        for ch in novel.chapters:
-            content_len = len(ch.content)
+        for ch in sorted(novel.chapters, key=lambda x: x.order):
+            content_len = ch.content_length
             lines.append(f"  {chapter_display(ch)} {ch.title}（{content_len}字）")
         yield event.plain_result("\n".join(lines))
 
@@ -531,7 +553,7 @@ class NovelGeneratorPlugin(Star):
     async def novel_stop(self, event: AstrMessageEvent):
         """结束当前创作会话"""
         session_id = self._get_session_id(event)
-        novel = await self.storage.get_active_novel(session_id)
+        novel = await self.storage.get_active_novel(session_id, load_content=False)
         if novel is None:
             yield event.plain_result("当前没有激活的小说。")
             return
@@ -571,7 +593,7 @@ class NovelGeneratorPlugin(Star):
             content = f"{novel.name}\n{display} {target_ch.title}\n\n{target_ch.content}"
         else:
             parts = [novel.name, "=" * len(novel.name)]
-            for ch in novel.chapters:
+            for ch in sorted(novel.chapters, key=lambda x: x.order):
                 display = chapter_display(ch)
                 parts.append(f"\n{display} {ch.title}\n")
                 if ch.content:
@@ -585,6 +607,13 @@ class NovelGeneratorPlugin(Star):
         safe_filename = filename.replace("/", "_").replace("\\", "_")
         tmp_dir = Path(tempfile.gettempdir()) / "astrbot_novel"
         tmp_dir.mkdir(parents=True, exist_ok=True)
+        # Clean up old temp files (> 1 hour)
+        for f in tmp_dir.iterdir():
+            if f.is_file() and f.stat().st_mtime < time.time() - 3600:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
         tmp_path = tmp_dir / safe_filename
         tmp_path.write_text(content, encoding="utf-8")
         chain = [Comp.File(name=safe_filename, file=str(tmp_path))]
@@ -629,6 +658,11 @@ class NovelGeneratorPlugin(Star):
         model_cls = cfg["model"]
         create_fields = cfg["create_fields"]
         sort_after_create = cfg["sort_after_create"]
+        # Type coercions for known numeric/boolean fields
+        _int_fields = {"number", "order"}
+        _float_fields: set[str] = set()
+        _bool_fields = {"is_extra"}
+        _list_fields = {"involved_characters"}
 
         async def handler(novel_id):
             novel = await self.storage.load_novel(novel_id)
@@ -639,7 +673,24 @@ class NovelGeneratorPlugin(Star):
                 return jsonify([dataclasses.asdict(item) for item in items])
             elif request.method == "POST":
                 data = await request.get_json() or {}
-                kwargs = {f: data.get(f, "" if f != "involved_characters" else []) for f in create_fields}
+                kwargs = {}
+                for f in create_fields:
+                    val = data.get(f, "" if f not in _list_fields else [])
+                    if f in _int_fields and isinstance(val, str) and val != "":
+                        try:
+                            val = int(val)
+                        except (ValueError, TypeError):
+                            val = 0
+                    elif f in _float_fields and isinstance(val, str) and val != "":
+                        try:
+                            val = float(val)
+                        except (ValueError, TypeError):
+                            val = 0.0
+                    elif f in _bool_fields and not isinstance(val, bool):
+                        val = str(val).lower() in ("true", "1", "yes")
+                    elif f in _list_fields and not isinstance(val, list):
+                        val = []
+                    kwargs[f] = val
                 if "number" in kwargs and kwargs["number"] == "":
                     kwargs["number"] = max((item.number for item in items), default=0) + 1
                 if "order" in kwargs and kwargs["order"] == "":
@@ -654,6 +705,7 @@ class NovelGeneratorPlugin(Star):
         return handler
 
     def _make_crud_item_handler(self, collection_name: str, cfg: dict):
+        model_cls = cfg["model"]
         sort_after_update = cfg.get("sort_after_create", False)
 
         async def handler(novel_id, item_id):
@@ -676,9 +728,10 @@ class NovelGeneratorPlugin(Star):
                 await self.storage.save_novel(novel)
                 return jsonify({"success": True})
             else:
+                editable = {k: v for k, v in data.items() if k in model_cls.EDITABLE_FIELDS}
                 for item in items:
                     if item.id == item_id:
-                        item.apply_updates(data)
+                        item.apply_updates(editable)
                         if sort_after_update:
                             items.sort(key=lambda x: x.order)
                         await self.storage.save_novel(novel)

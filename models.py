@@ -70,6 +70,7 @@ class Chapter(EditableMixin):
     order: float = 0.0
     title: str = ""
     content: str = ""
+    content_length: int = 0
     status: str = "draft"
     summary: str = ""
     label: str = ""
