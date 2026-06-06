@@ -25,6 +25,7 @@ class NovelStorage:
         self._novels_dir.mkdir(parents=True, exist_ok=True)
         self._kv_plugin = None
         self._novel_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
+        self._index_lock = asyncio.Lock()
 
     def _get_lock(self, novel_id: str) -> asyncio.Lock:
         if novel_id in self._novel_locks:
@@ -61,6 +62,9 @@ class NovelStorage:
         if novel_id is None:
             return None
         return await self.load_novel(novel_id, load_content=load_content)
+
+    async def get_active_novel_id(self, session_id: str) -> Optional[str]:
+        return await self._get_active_novel_id(session_id)
 
     async def set_active_novel(self, session_id: str, novel_id: str):
         await self._set_active_novel_id(session_id, novel_id)
@@ -155,11 +159,20 @@ class NovelStorage:
             chapters_dir = self._ensure_chapters_dir(novel.id)
             active_ids = {ch.id for ch in novel.chapters}
             for ch in novel.chapters:
-                ch.content_length = len(ch.content)
+                new_length = len(ch.content)
                 ch_path = chapters_dir / f"{ch.id}.txt"
-                tmp_ch = ch_path.with_suffix(".tmp")
-                tmp_ch.write_text(ch.content, encoding="utf-8")
-                os.replace(tmp_ch, ch_path)
+                # Only rewrite if content actually changed
+                needs_write = (
+                    not ch_path.exists()
+                    or ch.content_length != new_length
+                )
+                ch.content_length = new_length
+                if needs_write and new_length > 0:
+                    tmp_ch = ch_path.with_suffix(".tmp")
+                    tmp_ch.write_text(ch.content, encoding="utf-8")
+                    os.replace(tmp_ch, ch_path)
+                elif new_length == 0 and ch_path.exists():
+                    ch_path.unlink(missing_ok=True)
             # Remove orphaned chapter files (deleted chapters)
             if chapters_dir.exists():
                 for f in chapters_dir.iterdir():
@@ -174,13 +187,16 @@ class NovelStorage:
             json.dumps(novel_dict, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         os.replace(tmp_path, path)
-        self._update_index_entry_sync(novel)
 
     def _load_novel_sync(self, novel_id: str, load_content: bool = True) -> Optional[Novel]:
         path = self._novel_path(novel_id)
         if not path.exists():
             return None
-        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"Failed to load novel {novel_id}: {e}")
+            return None
         if load_content:
             for ch_dict in data.get("chapters", []):
                 ch_id = ch_dict.get("id", "")
@@ -203,8 +219,6 @@ class NovelStorage:
         if chapters_dir.exists():
             shutil.rmtree(chapters_dir)
             deleted = True
-        if deleted:
-            self._remove_index_entry_sync(novel_id)
         return deleted
 
     def _list_novels_sync(self) -> list[Novel]:
@@ -222,16 +236,29 @@ class NovelStorage:
     async def save_novel(self, novel: Novel, *, save_content: bool = True):
         async with self._get_lock(novel.id):
             await asyncio.to_thread(self._save_novel_sync, novel, save_content)
+        async with self._index_lock:
+            await asyncio.to_thread(self._update_index_entry_sync, novel)
 
     async def load_novel(self, novel_id: str, *, load_content: bool = True) -> Optional[Novel]:
         async with self._get_lock(novel_id):
             return await asyncio.to_thread(self._load_novel_sync, novel_id, load_content)
 
+    async def load_chapter_content(self, novel_id: str, chapter_id: str) -> Optional[str]:
+        def _read():
+            ch_path = self._chapter_path(novel_id, chapter_id)
+            if ch_path.exists():
+                return ch_path.read_text(encoding="utf-8")
+            return None
+        return await asyncio.to_thread(_read)
+
     async def delete_novel(self, novel_id: str) -> bool:
         async with self._get_lock(novel_id):
             result = await asyncio.to_thread(self._delete_novel_sync, novel_id)
-        if result and novel_id in self._novel_locks:
-            del self._novel_locks[novel_id]
+        if result:
+            async with self._index_lock:
+                await asyncio.to_thread(self._remove_index_entry_sync, novel_id)
+            if novel_id in self._novel_locks:
+                del self._novel_locks[novel_id]
         return result
 
     async def list_novels(self) -> list[Novel]:
@@ -247,7 +274,14 @@ class NovelStorage:
         entries = await asyncio.to_thread(self._read_index_sync)
         if not entries:
             entries = await asyncio.to_thread(self._rebuild_index_sync)
+        name_lower = name.lower()
+        # Exact match first
         for entry in entries:
             if entry.get("name") == name:
+                return entry
+        # Case-insensitive substring match
+        for entry in entries:
+            entry_name = entry.get("name", "")
+            if name_lower in entry_name.lower():
                 return entry
         return None

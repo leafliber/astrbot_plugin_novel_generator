@@ -37,31 +37,38 @@ _CRUD_CONFIG: dict[str, dict[str, Any]] = {
         "model": Character,
         "create_fields": ["name", "personality", "appearance", "background", "notes"],
         "sort_after_create": False,
+        "needs_content": False,
     },
     "relationships": {
         "model": Relationship,
         "create_fields": ["character_a", "character_b", "relation_type", "description"],
         "sort_after_create": False,
+        "needs_content": False,
     },
     "events": {
         "model": Event,
         "create_fields": ["name", "timeline_position", "description", "involved_characters"],
         "sort_after_create": False,
+        "needs_content": False,
     },
     "outlines": {
         "model": Outline,
         "create_fields": ["title", "chapter_plan", "plot_direction", "notes", "parent_id", "order"],
         "sort_after_create": False,
+        "needs_content": False,
     },
     "chapters": {
         "model": Chapter,
         "create_fields": ["number", "order", "title", "content", "status", "summary", "label", "is_extra"],
         "sort_after_create": True,
+        "needs_content": False,
+        "strip_content": True,
     },
     "world_settings": {
         "model": WorldSetting,
         "create_fields": ["category", "name", "description"],
         "sort_after_create": False,
+        "needs_content": False,
     },
 }
 
@@ -88,6 +95,9 @@ class NovelGeneratorPlugin(Star):
     @novel.command("create")
     async def novel_create(self, event: AstrMessageEvent, name: str):
         """创建一本新小说"""
+        if not name.strip():
+            yield event.plain_result("小说名称不能为空，请提供名称。")
+            return
         session_id = self._get_session_id(event)
         if await self.storage.find_novel_summary_by_name(name):
             yield event.plain_result(f"已存在名为「{name}」的小说，请使用其他名称。")
@@ -114,7 +124,7 @@ class NovelGeneratorPlugin(Star):
     async def novel_list(self, event: AstrMessageEvent):
         """列出所有小说"""
         session_id = self._get_session_id(event)
-        active_id = await self.storage._get_active_novel_id(session_id)
+        active_id = await self.storage.get_active_novel_id(session_id)
         summaries = await self.storage.list_novel_summaries()
         if not summaries:
             yield event.plain_result("暂无小说，使用 /novel create 创建一本吧！")
@@ -135,7 +145,7 @@ class NovelGeneratorPlugin(Star):
             yield event.plain_result(f"未找到名为「{name}」的小说。")
             return
         target_id = summary["id"]
-        active_novel_id = await self.storage._get_active_novel_id(session_id)
+        active_novel_id = await self.storage.get_active_novel_id(session_id)
         if active_novel_id and active_novel_id == target_id:
             await self.storage.remove_active_novel(session_id)
         await self.storage.delete_novel(target_id)
@@ -277,6 +287,9 @@ class NovelGeneratorPlugin(Star):
     @novel.command("write")
     async def novel_write(self, event: AstrMessageEvent, *, requirement: str):
         """创作或修改小说，传入创作/修改要求"""
+        if not requirement.strip():
+            yield event.plain_result("创作要求不能为空，请描述你想要的内容。")
+            return
         session_id = self._get_session_id(event)
         novel = await self.storage.get_active_novel(session_id)
         if novel is None:
@@ -303,6 +316,9 @@ class NovelGeneratorPlugin(Star):
     @novel.command("ask")
     async def novel_ask(self, event: AstrMessageEvent, *, question: str):
         """对小说提问"""
+        if not question.strip():
+            yield event.plain_result("问题不能为空，请输入你的问题。")
+            return
         session_id = self._get_session_id(event)
         novel = await self.storage.get_active_novel(session_id)
         if novel is None:
@@ -484,7 +500,7 @@ class NovelGeneratorPlugin(Star):
         """阅读小说，可指定章节号"""
         session_id = self._get_session_id(event)
         if chapter_number > 0:
-            novel = await self.storage.get_active_novel(session_id)
+            novel = await self.storage.get_active_novel(session_id, load_content=False)
             if novel is None:
                 yield event.plain_result(
                     "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
@@ -492,9 +508,10 @@ class NovelGeneratorPlugin(Star):
                 return
             for ch in novel.chapters:
                 if ch.number == chapter_number:
+                    content = await self.storage.load_chapter_content(novel.id, ch.id) or ""
                     display = chapter_display(ch)
                     async for result in self._yield_segmented(
-                        event, ch.content, header=f"{display} {ch.title}"
+                        event, content, header=f"{display} {ch.title}"
                     ):
                         yield result
                     return
@@ -507,12 +524,13 @@ class NovelGeneratorPlugin(Star):
                 )
                 return
             lines = [f"📖 「{novel.name}」概览"]
+            total_words = sum(ch.content_length for ch in novel.chapters)
             lines.append(f"角色：{len(novel.characters)} 个")
             lines.append(f"关系：{len(novel.relationships)} 条")
             lines.append(f"事件：{len(novel.events)} 个")
             lines.append(f"大纲：{len(novel.outlines)} 条")
             lines.append(f"世界观设定：{len(novel.world_settings)} 条")
-            lines.append(f"章节：{len(novel.chapters)} 章")
+            lines.append(f"章节：{len(novel.chapters)} 章（共 {total_words} 字）")
             if novel.characters:
                 lines.append("\n角色列表：")
                 for c in novel.characters:
@@ -544,9 +562,12 @@ class NovelGeneratorPlugin(Star):
             yield event.plain_result("当前小说暂无章节，使用 /novel write 开始创作吧！")
             return
         lines = [f"📚 「{novel.name}」章节列表："]
+        total_words = 0
         for ch in sorted(novel.chapters, key=lambda x: x.order):
             content_len = ch.content_length
+            total_words += content_len
             lines.append(f"  {chapter_display(ch)} {ch.title}（{content_len}字）")
+        lines.append(f"  ── 共 {total_words} 字")
         yield event.plain_result("\n".join(lines))
 
     @novel.command("stop")
@@ -566,7 +587,7 @@ class NovelGeneratorPlugin(Star):
     async def novel_download(self, event: AstrMessageEvent, chapter_number: int = 0):
         """下载小说TXT文件，不指定章节号则下载全本"""
         session_id = self._get_session_id(event)
-        novel = await self.storage.get_active_novel(session_id)
+        novel = await self.storage.get_active_novel(session_id, load_content=False)
         if novel is None:
             yield event.plain_result(
                 "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
@@ -585,26 +606,18 @@ class NovelGeneratorPlugin(Star):
             if target_ch is None:
                 yield event.plain_result(f"未找到第{chapter_number}章。")
                 return
-            if not target_ch.content:
+            content = await self.storage.load_chapter_content(novel.id, target_ch.id) or ""
+            if not content:
                 yield event.plain_result(f"{chapter_display(target_ch)}「{target_ch.title}」暂无内容。")
                 return
             display = chapter_display(target_ch)
             filename = f"{novel.name}_{display}_{target_ch.title}.txt"
-            content = f"{novel.name}\n{display} {target_ch.title}\n\n{target_ch.content}"
+            body = f"{novel.name}\n{display} {target_ch.title}\n\n{content}"
         else:
-            parts = [novel.name, "=" * len(novel.name)]
-            for ch in sorted(novel.chapters, key=lambda x: x.order):
-                display = chapter_display(ch)
-                parts.append(f"\n{display} {ch.title}\n")
-                if ch.content:
-                    parts.append(ch.content)
-                else:
-                    parts.append("（本章暂无内容）")
-                parts.append("")
-            content = "\n".join(parts)
+            sorted_chapters = sorted(novel.chapters, key=lambda x: x.order)
             filename = f"{novel.name}_全本.txt"
 
-        safe_filename = filename.replace("/", "_").replace("\\", "_")
+        safe_filename = re.sub(r'[<>:"/\\|?*]', "_", filename)
         tmp_dir = Path(tempfile.gettempdir()) / "astrbot_novel"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         # Clean up old temp files (> 1 hour)
@@ -615,7 +628,18 @@ class NovelGeneratorPlugin(Star):
                 except OSError:
                     pass
         tmp_path = tmp_dir / safe_filename
-        tmp_path.write_text(content, encoding="utf-8")
+        if chapter_number > 0:
+            tmp_path.write_text(body, encoding="utf-8")
+        else:
+            # Stream full novel to file chapter by chapter to avoid holding all content in memory
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(f"{novel.name}\n{'=' * len(novel.name)}\n")
+                for ch in sorted_chapters:
+                    display = chapter_display(ch)
+                    f.write(f"\n{display} {ch.title}\n")
+                    ch_content = await self.storage.load_chapter_content(novel.id, ch.id) or ""
+                    f.write(ch_content if ch_content else "（本章暂无内容）")
+                    f.write("\n")
         chain = [Comp.File(name=safe_filename, file=str(tmp_path))]
         yield event.chain_result(chain)
 
@@ -658,6 +682,8 @@ class NovelGeneratorPlugin(Star):
         model_cls = cfg["model"]
         create_fields = cfg["create_fields"]
         sort_after_create = cfg["sort_after_create"]
+        load_content = cfg.get("needs_content", True)
+        strip_content = cfg.get("strip_content", False)
         # Type coercions for known numeric/boolean fields
         _int_fields = {"number", "order"}
         _float_fields: set[str] = set()
@@ -665,12 +691,16 @@ class NovelGeneratorPlugin(Star):
         _list_fields = {"involved_characters"}
 
         async def handler(novel_id):
-            novel = await self.storage.load_novel(novel_id)
+            novel = await self.storage.load_novel(novel_id, load_content=load_content)
             if novel is None:
                 return jsonify({"error": "Novel not found"}), 404
             items = getattr(novel, collection_name)
             if request.method == "GET":
-                return jsonify([dataclasses.asdict(item) for item in items])
+                serialized = [dataclasses.asdict(item) for item in items]
+                if strip_content:
+                    for d in serialized:
+                        d.pop("content", None)
+                return jsonify(serialized)
             elif request.method == "POST":
                 data = await request.get_json() or {}
                 kwargs = {}
@@ -707,9 +737,10 @@ class NovelGeneratorPlugin(Star):
     def _make_crud_item_handler(self, collection_name: str, cfg: dict):
         model_cls = cfg["model"]
         sort_after_update = cfg.get("sort_after_create", False)
+        load_content = cfg.get("needs_content", True)
 
         async def handler(novel_id, item_id):
-            novel = await self.storage.load_novel(novel_id)
+            novel = await self.storage.load_novel(novel_id, load_content=load_content)
             if novel is None:
                 return jsonify({"error": "Novel not found"}), 404
             items = getattr(novel, collection_name)

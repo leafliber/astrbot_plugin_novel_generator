@@ -11,6 +11,8 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 from .models import Character, Chapter, Event, Novel, Outline, Relationship, WorldSetting, chapter_display
 from .storage import NovelStorage
 
+_STATUS_LABELS = {"draft": "草稿", "review": "审核中", "final": "定稿"}
+
 
 def _next_chapter_number(novel: Novel) -> int:
     return max((ch.number for ch in novel.chapters), default=0) + 1
@@ -99,8 +101,15 @@ class CharacterTool(BaseNovelTool):
             return err
         action = kwargs.get("action", "")
         if action == "create":
+            char_name = kwargs.get("name", "")
+            duplicates = [c for c in novel.characters if c.name == char_name and char_name]
+            if duplicates:
+                dup_ids = ", ".join(c.id for c in duplicates)
+                warning = f"\n⚠ 注意：已存在同名角色（ID: {dup_ids}），引用此角色时请使用 ID 而非姓名。"
+            else:
+                warning = ""
             char = Character(
-                name=kwargs.get("name", ""),
+                name=char_name,
                 personality=kwargs.get("personality", ""),
                 appearance=kwargs.get("appearance", ""),
                 background=kwargs.get("background", ""),
@@ -108,7 +117,7 @@ class CharacterTool(BaseNovelTool):
             )
             novel.characters.append(char)
             await self._save(novel)
-            return f"角色「{char.name}」已创建，ID: {char.id}"
+            return f"角色「{char.name}」已创建，ID: {char.id}{warning}"
         elif action == "query":
             cid = kwargs.get("character_id", "")
             for c in novel.characters:
@@ -627,7 +636,11 @@ class ChapterTool(BaseNovelTool):
         "\n"
         "## 调整顺序\n"
         "- move：移动单个章节，指定 before/after_chapter_id 作为锚点。适合微调。"
-        "- reorder：传入完整的章节ID列表重排全部章节。适合大规模调整。"
+        "- reorder：传入完整的章节ID列表重排全部章节。适合大规模调整。\n"
+        "\n"
+        "## 重编号\n"
+        "- renumber：按当前排列顺序，将普通章节的 number 从 1 开始连续编号。"
+        "带有 label 或 is_extra=true 的章节不受影响。适合删除章节后消除号码间隙。"
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -635,8 +648,8 @@ class ChapterTool(BaseNovelTool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "操作类型：create(创建), query(按ID查询), update(修改元数据), delete(删除), list(列出所有), append_content(追加正文到章节末尾), search(按标题/摘要模糊搜索), reorder(整体重排章节顺序), move(单章移动到指定位置)",
-                    "enum": ["create", "query", "update", "delete", "list", "append_content", "search", "reorder", "move"],
+                    "description": "操作类型：create(创建), query(按ID查询), update(修改元数据), delete(删除), list(列出所有), append_content(追加正文到章节末尾), search(按标题/摘要模糊搜索), reorder(整体重排章节顺序), move(单章移动到指定位置), renumber(按排列顺序连续重编章节号)",
+                    "enum": ["create", "query", "update", "delete", "list", "append_content", "search", "reorder", "move", "renumber"],
                 },
                 "chapter_id": {
                     "type": "string",
@@ -791,7 +804,7 @@ class ChapterTool(BaseNovelTool):
             for ch in novel.chapters:
                 fields = [ch.title, ch.summary, ch.label]
                 if any(keyword in f for f in fields):
-                    status_label = {"draft": "草稿", "review": "审核中", "final": "定稿"}.get(ch.status, ch.status)
+                    status_label = _STATUS_LABELS.get(ch.status, ch.status)
                     display = chapter_display(ch)
                     result.append(
                         f"- {display} {ch.title}(ID:{ch.id}) [{status_label}]"
@@ -802,7 +815,7 @@ class ChapterTool(BaseNovelTool):
                 return "暂无章节"
             result = []
             for ch in novel.chapters:
-                status_label = {"draft": "草稿", "review": "审核中", "final": "定稿"}.get(ch.status, ch.status)
+                status_label = _STATUS_LABELS.get(ch.status, ch.status)
                 summary_info = f" | 摘要: {ch.summary[:40]}" if ch.summary else ""
                 display = chapter_display(ch)
                 extra_tag = " [番外]" if ch.is_extra else ""
@@ -896,6 +909,22 @@ class ChapterTool(BaseNovelTool):
             id_to_ch = {ch.id: ch for ch in novel.chapters}
             direction = f"移到{chapter_display(id_to_ch[anchor_id])}之前" if before_id else f"移到{chapter_display(id_to_ch[anchor_id])}之后"
             return f"{display}「{target.title}」已{direction}（order={new_order}）"
+        elif action == "renumber":
+            novel.chapters.sort(key=lambda x: x.order)
+            next_num = 1
+            changed = []
+            for ch in novel.chapters:
+                if ch.label or ch.is_extra:
+                    continue
+                old_num = ch.number
+                ch.number = next_num
+                if old_num != next_num:
+                    changed.append(f"  {chapter_display(ch)} {ch.title}（{old_num} → {next_num}）")
+                next_num += 1
+            await self._save(novel)
+            if not changed:
+                return f"章节编号已连续，无需调整（共 {next_num - 1} 个普通章节）。"
+            return f"已重编号 {len(changed)} 个章节：\n" + "\n".join(changed)
         return "未知操作"
 
 
@@ -1095,7 +1124,10 @@ def _make_readonly_cls(cls: type[BaseNovelTool]) -> type[BaseNovelTool]:
     )
 
 
-READONLY_NOVEL_TOOLS = [_make_readonly_cls(t) for t in NOVEL_TOOLS]
+READONLY_NOVEL_TOOLS = [
+    _make_readonly_cls(t) for t in NOVEL_TOOLS
+    if t is not NovelTool
+]
 
 
 def make_readonly_tools() -> list[type[BaseNovelTool]]:
