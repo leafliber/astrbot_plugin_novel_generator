@@ -106,9 +106,7 @@ class CharacterTool(BaseNovelTool):
             duplicates = [c for c in novel.characters if c.name == char_name and char_name]
             if duplicates:
                 dup_ids = ", ".join(c.id for c in duplicates)
-                warning = f"\n⚠ 注意：已存在同名角色（ID: {dup_ids}），引用此角色时请使用 ID 而非姓名。"
-            else:
-                warning = ""
+                return f"错误：已存在同名角色「{char_name}」（ID: {dup_ids}），请使用不同的名称以避免引用冲突。"
             char = Character(
                 name=char_name,
                 personality=kwargs.get("personality", ""),
@@ -118,7 +116,7 @@ class CharacterTool(BaseNovelTool):
             )
             novel.characters.append(char)
             await self._save(novel)
-            return f"角色「{char.name}」已创建，ID: {char.id}{warning}"
+            return f"角色「{char.name}」已创建，ID: {char.id}"
         elif action == "query":
             cid = kwargs.get("character_id", "")
             for c in novel.characters:

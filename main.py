@@ -121,7 +121,7 @@ class NovelGeneratorPlugin(Star):
             return
         session_id = self._get_session_id(event)
         novel_filter = self._get_novel_filter(event)
-        if await self.storage.find_novel_summary_by_name(name, **novel_filter):
+        if await self.storage.find_novel_summary_by_name(name, exact_only=True, **novel_filter):
             yield event.plain_result(f"已存在名为「{name}」的小说，请使用其他名称。")
             return
         novel = Novel(
@@ -367,7 +367,7 @@ class NovelGeneratorPlugin(Star):
             yield event.plain_result("创作要求不能为空，请描述你想要的内容。")
             return
         session_id = self._get_session_id(event)
-        novel = await self.storage.get_active_novel(session_id)
+        novel = await self.storage.get_active_novel(session_id, load_content=False)
         if novel is None:
             yield event.plain_result(
                 "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
@@ -379,15 +379,18 @@ class NovelGeneratorPlugin(Star):
         if novel.chapters:
             recent = []
             for ch in sorted(novel.chapters, key=lambda x: x.order)[-2:]:
-                text = ch.summary or ch.content[:500]
+                text = ch.summary
                 if text:
                     recent.append(f"  {chapter_display(ch)} {ch.title}: {text}")
             if recent:
                 prompt += "\n\n最近章节回顾：\n" + "\n".join(recent)
         yield event.plain_result(random.choice(self._WRITE_HINTS))
-        llm_resp = await self._run_agent(event, novel, prompt)
-        async for result in self._yield_segmented(event, llm_resp.completion_text):
-            yield result
+        try:
+            llm_resp = await self._run_agent(event, novel, prompt)
+            async for result in self._yield_segmented(event, llm_resp.completion_text):
+                yield result
+        except Exception:
+            yield event.plain_result("创作过程中发生错误，请稍后重试或简化您的要求。")
 
     @novel.command("ask", alias={"问"})
     async def novel_ask(self, event: AstrMessageEvent, *, question: str):
@@ -396,7 +399,7 @@ class NovelGeneratorPlugin(Star):
             yield event.plain_result("问题不能为空，请输入你的问题。")
             return
         session_id = self._get_session_id(event)
-        novel = await self.storage.get_active_novel(session_id)
+        novel = await self.storage.get_active_novel(session_id, load_content=False)
         if novel is None:
             yield event.plain_result(
                 "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
@@ -405,9 +408,12 @@ class NovelGeneratorPlugin(Star):
         context_info = self._build_context_info(novel)
         prompt = f"{context_info}\n用户问题：{question}\n请基于小说内容回答，如需查看详细数据请使用工具查询。"
         yield event.plain_result(random.choice(self._ASK_HINTS))
-        llm_resp = await self._run_readonly_agent(event, novel, prompt)
-        async for result in self._yield_segmented(event, llm_resp.completion_text):
-            yield result
+        try:
+            llm_resp = await self._run_readonly_agent(event, novel, prompt)
+            async for result in self._yield_segmented(event, llm_resp.completion_text):
+                yield result
+        except Exception:
+            yield event.plain_result("思考过程中发生错误，请稍后重试。")
 
     @staticmethod
     def _build_context_info(novel: Novel) -> str:
@@ -490,7 +496,14 @@ class NovelGeneratorPlugin(Star):
             elif budget > 50:
                 result_parts.append(text[:budget] + "\n…（已截断，请使用工具查询完整数据）")
                 remaining = 0
-            # else: skip section entirely when budget is too small
+            else:
+                # Budget too small for truncation — emit a one-line summary
+                # so the agent at least knows this data exists
+                first_line = text.split("\n", 1)[0]
+                summary = f"{first_line.split('：', 1)[0]}：（已省略，请使用工具查询）"
+                if remaining > len(summary) + 1:
+                    result_parts.append(summary)
+                    remaining -= len(summary) + 1
         return "\n".join(result_parts) + "\n"
 
     @staticmethod
@@ -517,7 +530,7 @@ class NovelGeneratorPlugin(Star):
             raw_segments.append(current)
 
         # Pass 2: split oversized segments by sentence boundaries
-        sentence_pat = re.compile(r".*?[。！？…~”」）\n?\!]+|.+$")
+        sentence_pat = re.compile(r".*?[。！？；…~”」）\n?\\!]+|.+$")
         final_segments: list[str] = []
         for seg in raw_segments:
             if len(seg) <= effective_max:
@@ -575,13 +588,13 @@ class NovelGeneratorPlugin(Star):
     async def novel_read(self, event: AstrMessageEvent, chapter_number: int = 0):
         """阅读小说，可指定章节号"""
         session_id = self._get_session_id(event)
+        novel = await self.storage.get_active_novel(session_id, load_content=False)
+        if novel is None:
+            yield event.plain_result(
+                "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
+            )
+            return
         if chapter_number > 0:
-            novel = await self.storage.get_active_novel(session_id, load_content=False)
-            if novel is None:
-                yield event.plain_result(
-                    "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
-                )
-                return
             for ch in novel.chapters:
                 if ch.number == chapter_number:
                     content = await self.storage.load_chapter_content(novel.id, ch.id) or ""
@@ -593,12 +606,6 @@ class NovelGeneratorPlugin(Star):
                     return
             yield event.plain_result(f"未找到第{chapter_number}章。")
         else:
-            novel = await self.storage.get_active_novel(session_id, load_content=False)
-            if novel is None:
-                yield event.plain_result(
-                    "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
-                )
-                return
             lines = [f"📖 「{novel.name}」概览"]
             total_words = sum(ch.content_length for ch in novel.chapters)
             lines.append(f"角色：{len(novel.characters)} 个")
@@ -783,11 +790,11 @@ class NovelGeneratorPlugin(Star):
         _list_fields = {"involved_characters"}
 
         async def handler(novel_id):
-            novel = await self.storage.load_novel(novel_id, load_content=load_content)
-            if novel is None:
-                return jsonify({"error": "Novel not found"}), 404
-            items = getattr(novel, collection_name)
             if request.method == "GET":
+                novel = await self.storage.load_novel(novel_id, load_content=load_content)
+                if novel is None:
+                    return jsonify({"error": "Novel not found"}), 404
+                items = getattr(novel, collection_name)
                 serialized = [dataclasses.asdict(item) for item in items]
                 if strip_content:
                     for d in serialized:
@@ -813,16 +820,28 @@ class NovelGeneratorPlugin(Star):
                     elif f in _list_fields and not isinstance(val, list):
                         val = []
                     kwargs[f] = val
-                if "number" in kwargs and kwargs["number"] == "":
-                    kwargs["number"] = max((item.number for item in items), default=0) + 1
-                if "order" in kwargs and kwargs["order"] == "":
-                    kwargs["order"] = max((item.order for item in items), default=0.0) + 1.0
-                item = model_cls(**kwargs)
-                items.append(item)
-                if sort_after_create:
-                    items.sort(key=lambda x: x.order)
-                await self.storage.save_novel(novel)
-                return jsonify(dataclasses.asdict(item))
+
+                created_item = None
+
+                async def _create(novel):
+                    nonlocal created_item
+                    items = getattr(novel, collection_name)
+                    if "number" in kwargs and kwargs["number"] == "":
+                        kwargs["number"] = max((item.number for item in items), default=0) + 1
+                    if "order" in kwargs and kwargs["order"] == "":
+                        kwargs["order"] = max((item.order for item in items), default=0.0) + 1.0
+                    created_item = model_cls(**kwargs)
+                    items.append(created_item)
+                    if sort_after_create:
+                        items.sort(key=lambda x: x.order)
+
+                novel = await self.storage.modify_novel(
+                    novel_id, _create, load_content=load_content
+                )
+                if novel is None:
+                    return jsonify({"error": "Novel not found"}), 404
+                assert created_item is not None
+                return jsonify(dataclasses.asdict(created_item))
 
         return handler
 
@@ -832,33 +851,41 @@ class NovelGeneratorPlugin(Star):
         load_content = cfg.get("needs_content", True)
 
         async def handler(novel_id, item_id):
-            novel = await self.storage.load_novel(novel_id, load_content=load_content)
+            data = await request.get_json() or {}
+            result = [None]
+
+            async def _modify(novel):
+                items = getattr(novel, collection_name)
+                if data.get("_action") == "delete":
+                    setattr(novel, collection_name, [i for i in items if i.id != item_id])
+                    if collection_name == "characters":
+                        novel.relationships = [
+                            r for r in novel.relationships
+                            if r.character_a != item_id and r.character_b != item_id
+                        ]
+                        for e in novel.events:
+                            e.involved_characters = [
+                                c for c in e.involved_characters if c != item_id
+                            ]
+                    result[0] = {"success": True}
+                else:
+                    editable = {k: v for k, v in data.items() if k in model_cls.EDITABLE_FIELDS}
+                    for item in items:
+                        if item.id == item_id:
+                            item.apply_updates(editable)
+                            if sort_after_update:
+                                items.sort(key=lambda x: x.order)
+                            result[0] = dataclasses.asdict(item)
+                            return
+                    return False  # Item not found — skip save
+
+            novel = await self.storage.modify_novel(
+                novel_id, _modify, load_content=load_content
+            )
             if novel is None:
                 return jsonify({"error": "Novel not found"}), 404
-            items = getattr(novel, collection_name)
-            data = await request.get_json() or {}
-            if data.get("_action") == "delete":
-                setattr(novel, collection_name, [i for i in items if i.id != item_id])
-                if collection_name == "characters":
-                    novel.relationships = [
-                        r for r in novel.relationships
-                        if r.character_a != item_id and r.character_b != item_id
-                    ]
-                    for e in novel.events:
-                        e.involved_characters = [
-                            c for c in e.involved_characters if c != item_id
-                        ]
-                await self.storage.save_novel(novel)
-                return jsonify({"success": True})
-            else:
-                editable = {k: v for k, v in data.items() if k in model_cls.EDITABLE_FIELDS}
-                for item in items:
-                    if item.id == item_id:
-                        item.apply_updates(editable)
-                        if sort_after_update:
-                            items.sort(key=lambda x: x.order)
-                        await self.storage.save_novel(novel)
-                        return jsonify(dataclasses.asdict(item))
+            if result[0] is None:
                 return jsonify({"error": f"{collection_name.rstrip('s').capitalize()} not found"}), 404
+            return jsonify(result[0])
 
         return handler

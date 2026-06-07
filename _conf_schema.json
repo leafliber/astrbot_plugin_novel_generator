@@ -38,7 +38,7 @@
   },
   "session_isolation": {
     "description": "会话隔离模式：决定小说数据的可见范围",
-    "type": "list",
+    "type": "string",
     "options": ["group", "user", "none"],
     "default": "group",
     "hint": "group: 分群隔离(默认), user: 分用户隔离, none: 不隔离"

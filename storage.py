@@ -211,6 +211,13 @@ class NovelStorage:
                     ch_dict["content_length"] = len(content)
                 else:
                     ch_dict["content"] = ch_dict.get("content", "")
+        else:
+            # Migration: compute content_length from file size for old data
+            for ch_dict in data.get("chapters", []):
+                if not ch_dict.get("content_length"):
+                    ch_path = self._chapter_path(novel_id, ch_dict.get("id", ""))
+                    if ch_path.exists():
+                        ch_dict["content_length"] = ch_path.stat().st_size
         return Novel.from_dict(data)
 
     def _delete_novel_sync(self, novel_id: str) -> bool:
@@ -240,8 +247,35 @@ class NovelStorage:
     async def save_novel(self, novel: Novel, *, save_content: bool = True):
         async with self._get_lock(novel.id):
             await asyncio.to_thread(self._save_novel_sync, novel, save_content)
-        async with self._index_lock:
             await asyncio.to_thread(self._update_index_entry_sync, novel)
+
+    async def modify_novel(
+        self,
+        novel_id: str,
+        modifier,
+        *,
+        load_content: bool = True,
+        save_content: bool = True,
+    ) -> Optional[Novel]:
+        """Load a novel, run *modifier* on it, then save — all under one lock.
+
+        *modifier* is an async callable ``async def cb(novel) -> Any``.
+        If it returns ``False`` the save is skipped (but the load still happened).
+        Returns the loaded ``Novel`` (possibly modified), or ``None`` if not found.
+        """
+        async with self._get_lock(novel_id):
+            novel = await asyncio.to_thread(
+                self._load_novel_sync, novel_id, load_content
+            )
+            if novel is None:
+                return None
+            result = await modifier(novel)
+            if result is not False:
+                await asyncio.to_thread(
+                    self._save_novel_sync, novel, save_content
+                )
+                await asyncio.to_thread(self._update_index_entry_sync, novel)
+            return novel
 
     async def load_novel(self, novel_id: str, *, load_content: bool = True) -> Optional[Novel]:
         async with self._get_lock(novel_id):
@@ -292,17 +326,19 @@ class NovelStorage:
             entries = await asyncio.to_thread(self._rebuild_index_sync)
         return self._filter_entries(entries, owner_group_id=owner_group_id, owner_user_id=owner_user_id)
 
-    async def find_novel_summary_by_name(self, name: str, *, owner_group_id: str | None = None, owner_user_id: str | None = None) -> Optional[dict]:
+    async def find_novel_summary_by_name(self, name: str, *, exact_only: bool = False, owner_group_id: str | None = None, owner_user_id: str | None = None) -> Optional[dict]:
         entries = await asyncio.to_thread(self._read_index_sync)
         if not entries:
             entries = await asyncio.to_thread(self._rebuild_index_sync)
         entries = self._filter_entries(entries, owner_group_id=owner_group_id, owner_user_id=owner_user_id)
-        name_lower = name.lower()
         # Exact match first
         for entry in entries:
             if entry.get("name") == name:
                 return entry
+        if exact_only:
+            return None
         # Case-insensitive substring match
+        name_lower = name.lower()
         for entry in entries:
             entry_name = entry.get("name", "")
             if name_lower in entry_name.lower():

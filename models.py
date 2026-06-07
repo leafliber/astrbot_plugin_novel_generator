@@ -168,4 +168,6 @@ def chapter_display(ch: Chapter) -> str:
         return ch.label
     if ch.is_extra:
         return f"番外·{ch.title}"
-    return f"第{ch.number}章"
+    if ch.number > 0:
+        return f"第{ch.number}章"
+    return ch.title or "（未编号）"
