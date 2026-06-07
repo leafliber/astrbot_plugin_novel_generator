@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import dataclasses
 import os
 import random
@@ -715,7 +716,23 @@ class NovelGeneratorPlugin(Star):
                     ch_content = await self.storage.load_chapter_content(novel.id, ch.id) or ""
                     f.write(ch_content if ch_content else "（本章暂无内容）")
                     f.write("\n")
-        chain = [Comp.File(name=safe_filename, file=str(tmp_path))]
+        # Send file: use AstrBot file service if configured, otherwise base64 encode
+        # to support cross-container deployments (e.g. AstrBot + NapCat in separate containers)
+        try:
+            from astrbot.core import astrbot_config as _cfg
+
+            _has_file_service = bool(_cfg.get("callback_api_base"))
+        except ImportError:
+            _has_file_service = False
+
+        if _has_file_service:
+            chain = [Comp.File(name=safe_filename, file=str(tmp_path))]
+        else:
+            file_bytes = tmp_path.read_bytes()
+            b64 = base64.b64encode(file_bytes).decode("ascii")
+            file_comp = Comp.File(name=safe_filename)
+            file_comp.url = f"base64://{b64}"
+            chain = [file_comp]
         yield event.chain_result(chain)
 
     def _register_web_apis(self):
