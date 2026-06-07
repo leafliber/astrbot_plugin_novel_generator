@@ -34,7 +34,8 @@ Agent 在创作过程中可自主调用 6 个内部工具：
 - **Agent 驱动** — 基于 AstrBot `tool_loop_agent`，LLM 自主规划创作流程并调用工具
 - **结构化数据** — 角色、关系、事件、大纲、章节、世界观全部结构化存储，支持查询和修改
 - **长篇连贯** — 自动维护故事梗概和章节摘要，跨章节保持情节连贯
-- **群聊隔离** — 每个会话独立激活一本小说，互不干扰
+- **可配置隔离** — 支持分群隔离（默认）、分用户隔离、不隔离三种模式
+- **所有权转让** — 支持在群聊中转让小说所有权给其他用户或群组
 - **Web 管理面板** — 内嵌于 AstrBot Dashboard，可视化浏览和编辑所有数据
 - **安全存储** — 原子写入 + 并发锁，不怕崩溃和竞争
 - **导出下载** — 支持下载单章或全本 TXT 文件
@@ -53,45 +54,56 @@ git clone https://github.com/leafliber/astrbot_plugin_novel_generator.git \
 ### 五分钟创作一本小说
 
 ```
-/novel create 星海漂流              # 1. 创建小说
-/novel write 写一个太空冒险故事       # 2. 开始创作，Agent 自动完成所有工作
-/novel chapters                     # 3. 查看章节列表
-/novel read 1                       # 4. 阅读第一章
-/novel write 继续写第二章             # 5. 继续创作
-/novel ask 主角和船长是什么关系        # 6. 随时提问
-/novel download                     # 7. 下载全本
+/novel 创建 星海漂流              # 1. 创建小说
+/novel 写 写一个太空冒险故事       # 2. 开始创作，Agent 自动完成所有工作
+/novel 章节                       # 3. 查看章节列表
+/novel 读 1                       # 4. 阅读第一章
+/novel 写 继续写第二章             # 5. 继续创作
+/novel 问 主角和船长是什么关系     # 6. 随时提问
+/novel 下载                       # 7. 下载全本
 ```
 
 ## 指令一览
 
-所有指令通过 `/novel` 指令组使用：
+所有指令通过 `/novel`（或 `/小说`）指令组使用，支持中文别名：
 
 ### 创作管理
 
-| 指令 | 说明 | 示例 |
-|---|---|---|
-| `/novel create <名称>` | 创建新小说并激活 | `/novel create 星海漂流` |
-| `/novel switch <名称>` | 切换到已有小说 | `/novel switch 星海漂流` |
-| `/novel list` | 列出所有小说 | `/novel list` |
-| `/novel delete <名称>` | 删除小说 | `/novel delete 废弃草稿` |
-| `/novel stop` | 结束当前创作会话（数据保留） | `/novel stop` |
+| 指令 | 别名 | 说明 | 示例 |
+|---|---|---|---|
+| `create <名称>` | `创建` | 创建新小说并激活 | `/novel 创建 星海漂流` |
+| `switch <名称>` | `切换` | 切换到已有小说 | `/novel 切换 星海漂流` |
+| `list` | `列表` | 列出当前可见的小说 | `/novel 列表` |
+| `delete <名称>` | `删除` | 删除小说 | `/novel 删除 废弃草稿` |
+| `transfer <名称>` | `转让` | 转让小说所有权 | `/novel 转让 @用户 小说名` |
+| `stop` | `停止` | 结束当前创作会话（数据保留） | `/novel 停止` |
 
 ### 创作与交互
 
-| 指令 | 说明 | 示例 |
-|---|---|---|
-| `/novel write <要求>` | 创作或修改小说，Agent 自主调用工具 | `/novel write 主角发现了一个秘密` |
-| `/novel ask <问题>` | 对小说提问，Agent 查询数据回答 | `/novel ask 主角的背景是什么` |
+| 指令 | 别名 | 说明 | 示例 |
+|---|---|---|---|
+| `write <要求>` | `写` | 创作或修改小说，Agent 自主调用工具 | `/novel 写 主角发现了一个秘密` |
+| `ask <问题>` | `问` | 对小说提问，Agent 查询数据回答 | `/novel 问 主角的背景是什么` |
 
 ### 阅读与导出
 
-| 指令 | 说明 | 示例 |
+| 指令 | 别名 | 说明 | 示例 |
+|---|---|---|---|
+| `read` | `读` | 阅读小说概览 | `/novel 读` |
+| `read <章节号>` | `读` | 阅读指定章节 | `/novel 读 3` |
+| `chapters` | `章节` | 查看章节列表及状态 | `/novel 章节` |
+| `download` | `下载` | 下载全本 TXT | `/novel 下载` |
+| `download <章节号>` | `下载` | 下载单章 TXT | `/novel 下载 1` |
+
+### 关于转让指令
+
+`/novel transfer`（`/novel 转让`）的行为取决于当前隔离模式：
+
+| 隔离模式 | 用法 | 效果 |
 |---|---|---|
-| `/novel read` | 阅读小说概览 | `/novel read` |
-| `/novel read <章节号>` | 阅读指定章节 | `/novel read 3` |
-| `/novel chapters` | 查看章节列表及状态 | `/novel chapters` |
-| `/novel download` | 下载全本 TXT | `/novel download` |
-| `/novel download <章节号>` | 下载单章 TXT | `/novel download 1` |
+| `group` | `/novel 转让 小说名` | 归属改为当前群聊（私聊则改为当前用户） |
+| `user` | `/novel 转让 @目标用户 小说名` | 归属改为 @ 的目标用户 |
+| `none` | `/novel 转让 小说名` | 更新归属字段（当前不影响可见性） |
 
 ## 配置项
 
@@ -105,6 +117,7 @@ git clone https://github.com/leafliber/astrbot_plugin_novel_generator.git \
 | `novel_system_prompt` | 内置提示词 | 自定义创作系统提示词，留空使用内置 |
 | `segment_max_length` | `2000` | 消息分段最大字符数，≤ 0 不分段 |
 | `segment_delay` | `5` | 分段发送间隔（秒），含 0-1 秒随机抖动 |
+| `session_isolation` | `group` | 会话隔离模式：`group`(分群)、`user`(分用户)、`none`(不隔离) |
 
 ## 项目结构
 
@@ -116,7 +129,7 @@ astrbot_plugin_novel_generator/
 ├── tools.py             # Agent 工具定义（6 个 FunctionTool）
 ├── pages/
 │   └── novel-manager/   # Web 管理面板前端
-├── tests/               # 单元测试（150 项）
+├── tests/               # 单元测试（160 项）
 ├── _conf_schema.json    # 配置项定义
 ├── metadata.yaml        # 插件元数据
 └── requirements.txt     # 依赖

@@ -108,11 +108,11 @@ class NovelGeneratorPlugin(Star):
             return {"owner_group_id": group_id}
         return {"owner_user_id": event.message_obj.sender.user_id}
 
-    @filter.command_group("novel")
+    @filter.command_group("novel", alias={"小说"})
     def novel(self):
         pass
 
-    @novel.command("create")
+    @novel.command("create", alias={"创建"})
     async def novel_create(self, event: AstrMessageEvent, name: str):
         """创建一本新小说"""
         if not name.strip():
@@ -134,7 +134,7 @@ class NovelGeneratorPlugin(Star):
             f"小说「{name}」已创建并激活！使用 /novel write 开始创作。"
         )
 
-    @novel.command("switch")
+    @novel.command("switch", alias={"切换"})
     async def novel_switch(self, event: AstrMessageEvent, name: str):
         """切换到指定小说"""
         session_id = self._get_session_id(event)
@@ -146,7 +146,7 @@ class NovelGeneratorPlugin(Star):
         await self.storage.set_active_novel(session_id, summary["id"])
         yield event.plain_result(f"已切换到小说「{name}」。")
 
-    @novel.command("list")
+    @novel.command("list", alias={"列表"})
     async def novel_list(self, event: AstrMessageEvent):
         """列出所有小说"""
         session_id = self._get_session_id(event)
@@ -163,7 +163,7 @@ class NovelGeneratorPlugin(Star):
             lines.append(f"  • {s['name']}（{ch_count} 章）{marker}")
         yield event.plain_result("\n".join(lines))
 
-    @novel.command("delete")
+    @novel.command("delete", alias={"删除"})
     async def novel_delete(self, event: AstrMessageEvent, name: str):
         """删除指定小说"""
         session_id = self._get_session_id(event)
@@ -179,7 +179,7 @@ class NovelGeneratorPlugin(Star):
         await self.storage.delete_novel(target_id)
         yield event.plain_result(f"小说「{name}」已删除。")
 
-    @novel.command("transfer")
+    @novel.command("transfer", alias={"转让"})
     async def novel_transfer(self, event: AstrMessageEvent, name: str):
         """转让小说所有权"""
         session_id = self._get_session_id(event)
@@ -359,7 +359,7 @@ class NovelGeneratorPlugin(Star):
             tools=tools,
         )
 
-    @novel.command("write")
+    @novel.command("write", alias={"写"})
     async def novel_write(self, event: AstrMessageEvent, *, requirement: str):
         """创作或修改小说，传入创作/修改要求"""
         if not requirement.strip():
@@ -388,7 +388,7 @@ class NovelGeneratorPlugin(Star):
         async for result in self._yield_segmented(event, llm_resp.completion_text):
             yield result
 
-    @novel.command("ask")
+    @novel.command("ask", alias={"问"})
     async def novel_ask(self, event: AstrMessageEvent, *, question: str):
         """对小说提问"""
         if not question.strip():
@@ -457,13 +457,13 @@ class NovelGeneratorPlugin(Star):
             for o in novel.outlines:
                 plan = f" | 规划: {_truncate(o.chapter_plan, max_field)}" if o.chapter_plan else ""
                 out_lines.append(f"  • {o.title}: 走向={_truncate(o.plot_direction, max_field) if o.plot_direction else '无'}{plan}")
-            sections.append((f"大纲（{len(novel.outlines)}条）：\n" + "\n".join(out_lines)), 0)
+            sections.append((f"大纲（{len(novel.outlines)}条）：\n" + "\n".join(out_lines), 0))
 
         if novel.world_settings:
             ws_lines = []
             for ws in novel.world_settings:
                 ws_lines.append(f"  • [{ws.category}] {ws.name}: {_truncate(ws.description, max_field) if ws.description else '无描述'}")
-            sections.append((f"世界观设定（{len(novel.world_settings)}条）：\n" + "\n".join(ws_lines)), 0)
+            sections.append((f"世界观设定（{len(novel.world_settings)}条）：\n" + "\n".join(ws_lines), 0))
 
         if novel.events:
             evt_lines = []
@@ -472,7 +472,7 @@ class NovelGeneratorPlugin(Star):
                 chars = ", ".join(char_names) if char_names else "无"
                 desc = f": {_truncate(e.description, max_field)}" if e.description else ""
                 evt_lines.append(f"  • {e.name}[{e.timeline_position}](涉及:{chars}){desc}")
-            sections.append((f"事件（{len(novel.events)}个）：\n" + "\n".join(evt_lines)), 0)
+            sections.append((f"事件（{len(novel.events)}个）：\n" + "\n".join(evt_lines), 0))
 
         # Allocate remaining budget across sections, respecting min_budget
         remaining = max_total - used
@@ -570,7 +570,7 @@ class NovelGeneratorPlugin(Star):
             if delay > 0 and i < total - 1:
                 await asyncio.sleep(delay + random.uniform(0, 1))
 
-    @novel.command("read")
+    @novel.command("read", alias={"读"})
     async def novel_read(self, event: AstrMessageEvent, chapter_number: int = 0):
         """阅读小说，可指定章节号"""
         session_id = self._get_session_id(event)
@@ -623,7 +623,7 @@ class NovelGeneratorPlugin(Star):
             async for result in self._yield_segmented(event, "\n".join(lines)):
                 yield result
 
-    @novel.command("chapters")
+    @novel.command("chapters", alias={"章节"})
     async def novel_chapters(self, event: AstrMessageEvent):
         """列出所有章节"""
         session_id = self._get_session_id(event)
@@ -645,7 +645,7 @@ class NovelGeneratorPlugin(Star):
         lines.append(f"  ── 共 {total_words} 字")
         yield event.plain_result("\n".join(lines))
 
-    @novel.command("stop")
+    @novel.command("stop", alias={"停止"})
     async def novel_stop(self, event: AstrMessageEvent):
         """结束当前创作会话"""
         session_id = self._get_session_id(event)
@@ -658,9 +658,9 @@ class NovelGeneratorPlugin(Star):
             f"小说「{novel.name}」的创作会话已结束，数据已保存。使用 /novel switch 可重新激活。"
         )
 
-    @novel.command("download")
-    async def novel_download(self, event: AstrMessageEvent, chapter_number: int = 0):
-        """下载小说TXT文件，不指定章节号则下载全本"""
+    @novel.command("download", alias={"下载"})
+    async def novel_download(self, event: AstrMessageEvent, *, chapter_number: int = 0):
+        """下载小说TXT文件，可指定章节号，不指定则下载全本"""
         session_id = self._get_session_id(event)
         novel = await self.storage.get_active_novel(session_id, load_content=False)
         if novel is None:

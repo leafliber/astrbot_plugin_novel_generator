@@ -60,12 +60,12 @@ def _identity(func):
 
 
 class _CommandGroupMock:
-    def command(self, cmd_name):
+    def command(self, cmd_name, **kwargs):
         return _identity
 
 
 class _FilterMock:
-    def command_group(self, name):
+    def command_group(self, name, **kwargs):
         def decorator(func):
             func.command = _CommandGroupMock().command
             return func
