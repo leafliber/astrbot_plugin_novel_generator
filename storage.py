@@ -18,7 +18,7 @@ PLUGIN_NAME = "astrbot_plugin_novel_generator"
 
 class NovelStorage:
     def __init__(self, data_base_path: Path):
-        self._novels_dir = data_base_path / "plugin_data" / PLUGIN_NAME / "novels"
+        self._novels_dir = data_base_path / "novels"
         self._novels_dir.mkdir(parents=True, exist_ok=True)
         self._kv_plugin = None
         self._novel_locks: dict[str, asyncio.Lock] = {}

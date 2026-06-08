@@ -51,12 +51,12 @@ def sample_novel():
 class TestNovelStorageInit:
     def test_creates_directory(self, tmp_data_base):
         NovelStorage(tmp_data_base)
-        expected = tmp_data_base / "plugin_data" / PLUGIN_NAME / "novels"
+        expected = tmp_data_base / "novels"
         assert expected.exists()
         assert expected.is_dir()
 
     def test_novels_dir_path(self, storage, tmp_data_base):
-        expected = tmp_data_base / "plugin_data" / PLUGIN_NAME / "novels"
+        expected = tmp_data_base / "novels"
         assert storage._novels_dir == expected
 
 
@@ -199,8 +199,6 @@ class TestNovelStoragePath:
         path = storage._novel_path("abc123")
         expected = (
             tmp_data_base
-            / "plugin_data"
-            / PLUGIN_NAME
             / "novels"
             / "abc123.json"
         )
