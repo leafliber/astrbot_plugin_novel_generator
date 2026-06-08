@@ -6,17 +6,17 @@
 
 <p align="center"><strong>让 AI 成为你的专属小说家 — 从角色设定到章节正文，一条指令全自动创作</strong></p>
 
-## 它能做什么？
+## 它能做什么
 
 告诉它你想写什么，它会自己搞定剩下的一切——建立角色档案、编织人物关系、规划剧情大纲、逐章撰写正文。
 
 ```
-/novel write 写一个赛博朋克题材的悬疑故事，主角是个地下黑客，偶然发现公司暗藏的意识上传实验
+/novel 写 写一个赛博朋克题材的悬疑故事，主角是个地下黑客，偶然发现公司暗藏的意识上传实验
 ```
 
 Agent 会自动调用内部工具完成：创建角色 → 建立关系 → 设定世界观 → 规划大纲 → 撰写章节正文。你只需要下达创作意图，结构化的数据管理交给它。
 
-### 创作中的 Agent 工具调用
+### Agent 工具
 
 Agent 在创作过程中可自主调用 6 个内部工具：
 
@@ -34,11 +34,11 @@ Agent 在创作过程中可自主调用 6 个内部工具：
 - **Agent 驱动** — 基于 AstrBot `tool_loop_agent`，LLM 自主规划创作流程并调用工具
 - **结构化数据** — 角色、关系、事件、大纲、章节、世界观全部结构化存储，支持查询和修改
 - **长篇连贯** — 自动维护故事梗概和章节摘要，跨章节保持情节连贯
+- **Web 管理面板** — 内嵌于 AstrBot Dashboard，可视化浏览和编辑所有数据（详见下方）
 - **可配置隔离** — 支持分群隔离（默认）、分用户隔离、不隔离三种模式
 - **所有权转让** — 支持在群聊中转让小说所有权给其他用户或群组
-- **Web 管理面板** — 内嵌于 AstrBot Dashboard，可视化浏览和编辑所有数据
+- **导出下载** — 支持通过聊天指令或 Web 面板下载单章或全本 TXT 文件
 - **安全存储** — 原子写入 + 并发锁，不怕崩溃和竞争
-- **导出下载** — 支持下载单章或全本 TXT 文件
 
 ## 快速开始
 
@@ -50,6 +50,8 @@ Agent 在创作过程中可自主调用 6 个内部工具：
 git clone https://github.com/leafliber/astrbot_plugin_novel_generator.git \
   AstrBot/data/plugins/astrbot_plugin_novel_generator/
 ```
+
+**要求**：Python >= 3.12
 
 ### 五分钟创作一本小说
 
@@ -65,7 +67,7 @@ git clone https://github.com/leafliber/astrbot_plugin_novel_generator.git \
 
 ## 指令一览
 
-所有指令通过 `/novel`（或 `/小说`）指令组使用，支持中文别名：
+所有指令通过 `/novel`（或 `/小说`）指令组使用，支持中文别名。
 
 ### 创作管理
 
@@ -75,7 +77,7 @@ git clone https://github.com/leafliber/astrbot_plugin_novel_generator.git \
 | `switch <名称>` | `切换` | 切换到已有小说 | `/novel 切换 星海漂流` |
 | `list` | `列表` | 列出当前可见的小说 | `/novel 列表` |
 | `delete <名称>` | `删除` | 删除小说 | `/novel 删除 废弃草稿` |
-| `transfer <名称>` | `转让` | 转让小说所有权 | `/novel 转让 @用户 小说名` |
+| `transfer <名称>` | `转让` | 转让小说所有权 | `/novel 转让 小说名` |
 | `stop` | `停止` | 结束当前创作会话（数据保留） | `/novel 停止` |
 
 ### 创作与交互
@@ -93,9 +95,9 @@ git clone https://github.com/leafliber/astrbot_plugin_novel_generator.git \
 | `read <章节号>` | `读` | 阅读指定章节 | `/novel 读 3` |
 | `chapters` | `章节` | 查看章节列表及状态 | `/novel 章节` |
 | `download` | `下载` | 下载全本 TXT | `/novel 下载` |
-| `download <章节号>` | `下载` | 下载单章 TXT | `/novel 下载 1` |
+| `download <章节号>` | `下载` | 下载指定章节 TXT | `/novel 下载 1` |
 
-### 关于转让指令
+## 转让指令
 
 `/novel transfer`（`/novel 转让`）的行为取决于当前隔离模式：
 
@@ -104,6 +106,21 @@ git clone https://github.com/leafliber/astrbot_plugin_novel_generator.git \
 | `group` | `/novel 转让 小说名` | 归属改为当前群聊（私聊则改为当前用户） |
 | `user` | `/novel 转让 @目标用户 小说名` | 归属改为 @ 的目标用户 |
 | `none` | `/novel 转让 小说名` | 更新归属字段（当前不影响可见性） |
+
+## Web 管理面板
+
+插件在 AstrBot Dashboard 中内嵌了可视化管理页面，打开即可浏览和编辑所有小说数据。
+
+### 功能
+
+- **概览面板** — 统计角色、关系、事件、大纲、章节数量和总字数，展示最近章节
+- **完整 CRUD** — 对角色、关系、事件、大纲、章节、世界观设定进行创建、编辑、删除
+- **角色名解析** — 关系和事件中自动将角色 ID 显示为名称
+- **大纲树形展示** — 层级结构可视化，支持父子关系
+- **世界观分类** — 设定按分类自动分组展示
+- **章节管理** — 状态标签（草稿/审阅/定稿）、字数统计、内容预览
+- **小说下载** — 支持从 Web 端下载单章或全本 TXT
+- **小说信息编辑** — 修改小说名称和故事梗概
 
 ## 配置项
 
@@ -129,11 +146,25 @@ astrbot_plugin_novel_generator/
 ├── tools.py             # Agent 工具定义（6 个 FunctionTool）
 ├── pages/
 │   └── novel-manager/   # Web 管理面板前端
-├── tests/               # 单元测试（160 项）
+├── tests/               # 单元测试（166 项）
 ├── _conf_schema.json    # 配置项定义
 ├── metadata.yaml        # 插件元数据
 └── requirements.txt     # 依赖
 ```
+
+## Token 消耗说明
+
+本插件**对 Token 消耗量较大**，使用前请了解以下原因：
+
+1. **Agent 多轮调用** — 每次创作指令会触发 LLM Agent 循环，Agent 需要多次调用工具（创建角色、建立关系、写大纲、逐章追加正文等），每一步都消耗 Token。写一章小说通常需要 10-30 个 Agent 步骤。
+
+2. **上下文累积** — 每次创作时会将小说的当前数据（角色、关系、大纲、最近章节摘要等）构建为上下文注入提示词，随着小说内容增长，单次请求的 Token 开销也会增加。
+
+3. **长文分段写入** — 章节正文通过多次 `append_content` 调用分段追加（每次约 1500-2500 字），每段都包含完整的工具调用上下文。
+
+4. **摘要维护** — 每章完成后 Agent 需更新摘要和故事梗概，这也是额外的 Token 开销。
+
+> **建议**：使用按量计费的 API 时注意控制创作频率；配合 `max_agent_steps` 限制单次最大步骤数；短篇或单章创作消耗远低于长篇多章节连续创作。
 
 ## 许可证
 
