@@ -245,30 +245,67 @@ function charCard(c) {
 // === Relationships ===
 function renderRelationships() {
   const rels = state.novelData.relationships || [];
+  const chars = state.novelData.characters || [];
   const panel = document.getElementById("panel-relationships");
+
+  // Build filter options from characters actually referenced in relationships
+  const usedIds = new Set();
+  for (const r of rels) {
+    usedIds.add(r.character_a);
+    usedIds.add(r.character_b);
+  }
+
+  let filterHtml = "";
+  if (chars.length > 0) {
+    const options = chars
+      .filter((c) => usedIds.has(c.id))
+      .map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`)
+      .join("");
+    filterHtml = `<select id="filter-character" class="rel-filter">
+      <option value="">全部角色</option>
+      ${options}
+    </select>`;
+  }
+
   let h = `
     <div class="tab-toolbar">
-      <span></span>
+      <div class="rel-toolbar-left">
+        ${filterHtml}
+      </div>
       <button class="btn btn-accent btn-sm" data-action="create" data-type="relationship">添加关系</button>
     </div>`;
+
   if (!rels.length) {
     h += `<div class="empty-state"><div class="empty-decor">~</div><p>暂无关系</p></div>`;
   } else {
-    h += rels.map((r) => `
-      <div class="item-card">
-        <div class="relationship-line">
-          <span class="char-name">${esc(cName(r.character_a))}</span>
-          <span class="relation-arrow">${esc(r.relation_type || "—")}</span>
-          <span class="char-name">${esc(cName(r.character_b))}</span>
-        </div>
-        ${r.description ? `<div class="item-body"><p>${esc(r.description)}</p></div>` : ""}
-        <div class="item-actions">
-          <button class="btn btn-ghost btn-sm" data-action="edit" data-type="relationship" data-id="${esc(r.id)}">编辑</button>
-          <button class="btn btn-danger-ghost btn-sm" data-action="delete" data-type="relationship" data-id="${esc(r.id)}">删除</button>
-        </div>
-      </div>`).join("");
+    h += `<div class="rel-grid" id="rel-grid">${rels.map(relCard).join("")}</div>`;
   }
   panel.innerHTML = h;
+}
+
+function relCard(r) {
+  const aName = cName(r.character_a);
+  const bName = cName(r.character_b);
+  const rType = r.relation_type || "关联";
+  return `
+    <div class="rel-card" data-char-a="${esc(r.character_a)}" data-char-b="${esc(r.character_b)}">
+      <div class="rel-nodes">
+        <div class="rel-node">
+          <span class="rel-node-name">${esc(aName)}</span>
+        </div>
+        <div class="rel-link">
+          <span class="rel-link-label">${esc(rType)}</span>
+        </div>
+        <div class="rel-node">
+          <span class="rel-node-name">${esc(bName)}</span>
+        </div>
+      </div>
+      ${r.description ? `<p class="rel-desc">${esc(r.description)}</p>` : ""}
+      <div class="item-actions">
+        <button class="btn btn-ghost btn-sm" data-action="edit" data-type="relationship" data-id="${esc(r.id)}">编辑</button>
+        <button class="btn btn-danger-ghost btn-sm" data-action="delete" data-type="relationship" data-id="${esc(r.id)}">删除</button>
+      </div>
+    </div>`;
 }
 
 // === Events ===
@@ -696,6 +733,20 @@ function bindGlobalEvents() {
       const chars = (state.novelData.characters || []).filter((c) => c.name.toLowerCase().includes(q));
       const grid = document.getElementById("characters-grid");
       if (grid) grid.innerHTML = chars.map(charCard).join("");
+    }
+  });
+
+  // Relationship character filter
+  document.querySelector(".tab-panels").addEventListener("change", (e) => {
+    if (e.target.id === "filter-character") {
+      const id = e.target.value;
+      const grid = document.getElementById("rel-grid");
+      if (!grid) return;
+      grid.querySelectorAll(".rel-card").forEach((card) => {
+        if (!id) { card.style.display = ""; return; }
+        const match = card.dataset.charA === id || card.dataset.charB === id;
+        card.style.display = match ? "" : "none";
+      });
     }
   });
 
