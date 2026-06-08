@@ -766,6 +766,30 @@ class NovelGeneratorPlugin(Star):
                 ["POST"],
                 f"{collection_name.capitalize()} item CRUD",
             )
+        self.context.register_web_api(
+            f"{prefix}/novels/create",
+            self.api_create_novel,
+            ["POST"],
+            "Create novel",
+        )
+        self.context.register_web_api(
+            f"{prefix}/novels/<novel_id>/delete",
+            self.api_delete_novel,
+            ["POST"],
+            "Delete novel",
+        )
+        self.context.register_web_api(
+            f"{prefix}/novels/<novel_id>/update",
+            self.api_update_novel,
+            ["POST"],
+            "Update novel metadata",
+        )
+        self.context.register_web_api(
+            f"{prefix}/novels/<novel_id>/download",
+            self.api_download_novel,
+            ["GET"],
+            "Download novel as TXT",
+        )
 
     async def api_list_novels(self):
         summaries = await self.storage.list_novel_summaries()
@@ -776,6 +800,91 @@ class NovelGeneratorPlugin(Star):
         if novel is None:
             return jsonify({"error": "Novel not found"}), 404
         return jsonify(novel.to_dict())
+
+    async def api_create_novel(self):
+        data = await request.get_json() or {}
+        name = data.get("name", "").strip()
+        if not name:
+            return jsonify({"error": "Name is required"}), 400
+        novel = Novel(name=name)
+        await self.storage.save_novel(novel)
+        return jsonify(
+            {
+                "id": novel.id,
+                "name": novel.name,
+                "created_at": novel.created_at,
+                "updated_at": novel.updated_at,
+                "chapter_count": 0,
+                "character_count": 0,
+            }
+        )
+
+    async def api_delete_novel(self, novel_id):
+        deleted = await self.storage.delete_novel(novel_id)
+        if not deleted:
+            return jsonify({"error": "Novel not found"}), 404
+        return jsonify({"success": True})
+
+    async def api_update_novel(self, novel_id):
+
+        async def _modify(novel):
+            data = await request.get_json() or {}
+            if "name" in data:
+                novel.name = data["name"]
+            if "synopsis" in data:
+                novel.synopsis = data["synopsis"]
+
+        novel = await self.storage.modify_novel(novel_id, _modify, load_content=False)
+        if novel is None:
+            return jsonify({"error": "Novel not found"}), 404
+        return jsonify(novel.to_dict())
+
+    async def api_download_novel(self, novel_id):
+        from quart import send_file
+
+        chapter_id = request.args.get("chapter", "")
+
+        if chapter_id:
+            novel = await self.storage.load_novel(novel_id, load_content=False)
+            if novel is None:
+                return jsonify({"error": "Novel not found"}), 404
+            target_ch = None
+            for ch in novel.chapters:
+                if ch.id == chapter_id:
+                    target_ch = ch
+                    break
+            if target_ch is None:
+                return jsonify({"error": "Chapter not found"}), 404
+            content = await self.storage.load_chapter_content(novel.id, target_ch.id) or ""
+            display = chapter_display(target_ch)
+            body = f"{novel.name}\n{display} {target_ch.title}\n\n{content}"
+            filename = f"{novel.name}_{display}_{target_ch.title}.txt"
+        else:
+            novel = await self.storage.load_novel(novel_id, load_content=True)
+            if novel is None:
+                return jsonify({"error": "Novel not found"}), 404
+            sorted_chapters = sorted(novel.chapters, key=lambda x: x.order)
+            parts = [f"{novel.name}\n{'=' * len(novel.name.encode('utf-8'))}\n"]
+            for ch in sorted_chapters:
+                display = chapter_display(ch)
+                parts.append(f"\n{display} {ch.title}\n")
+                parts.append(ch.content if ch.content else "（本章暂无内容）")
+                parts.append("\n")
+            body = "".join(parts)
+            filename = f"{novel.name}_全本.txt"
+
+        safe_filename = re.sub(r'[<>:"/\\|?*]', "_", filename)
+        tmp_dir = Path(tempfile.gettempdir()) / "astrbot_novel_web"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        for f in tmp_dir.iterdir():
+            if f.is_file() and f.stat().st_mtime < time.time() - 3600:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+        tmp_path = tmp_dir / safe_filename
+        tmp_path.write_text(body, encoding="utf-8")
+        return await send_file(tmp_path, as_attachment=True, download_name=safe_filename)
 
     def _make_crud_list_handler(self, collection_name: str, cfg: dict):
         model_cls = cfg["model"]

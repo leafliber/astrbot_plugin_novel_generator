@@ -83,7 +83,7 @@ class TestNovelGeneratorPluginInit:
         context = _make_context(None)
         config = _make_config()
         NovelGeneratorPlugin(context, config)
-        assert context.register_web_api.call_count == 14
+        assert context.register_web_api.call_count == 18
 
     @pytest.mark.asyncio
     async def test_terminate(self, MockStorage, tmp_data_base):
@@ -478,7 +478,7 @@ class TestWebAPIRegistration:
         context = _make_context(None)
         config = _make_config()
         NovelGeneratorPlugin(context, config)
-        assert context.register_web_api.call_count == 14
+        assert context.register_web_api.call_count == 18
 
     @patch("astrbot_plugin_novel_generator.main.NovelStorage")
     def test_api_registration_paths(self, MockStorage, tmp_data_base):

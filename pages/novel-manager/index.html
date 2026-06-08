@@ -2,40 +2,86 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>小说管理器</title>
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
   <div id="app">
-    <header>
-      <h1 id="page-title">小说管理器</h1>
-    </header>
-    <main>
-      <section id="novel-list-section">
-        <h2>小说列表</h2>
-        <div id="novel-list"></div>
-      </section>
-      <section id="novel-detail-section" style="display:none">
-        <div class="detail-header">
-          <button id="back-btn">← 返回列表</button>
-          <h2 id="novel-title"></h2>
+    <!-- Toast container -->
+    <div id="toast-container"></div>
+
+    <!-- Modal overlay (reused for all forms) -->
+    <div id="modal-overlay" class="hidden">
+      <div class="modal">
+        <h3 id="modal-title"></h3>
+        <form id="modal-form"></form>
+        <div class="modal-actions">
+          <button type="button" id="modal-save" class="btn btn-primary">保存</button>
+          <button type="button" id="modal-cancel" class="btn btn-secondary">取消</button>
         </div>
-        <div class="tabs">
-          <button class="tab-btn active" data-tab="characters">角色</button>
-          <button class="tab-btn" data-tab="relationships">关系</button>
-          <button class="tab-btn" data-tab="events">事件</button>
-          <button class="tab-btn" data-tab="outlines">大纲</button>
-          <button class="tab-btn" data-tab="chapters">章节</button>
+      </div>
+    </div>
+
+    <!-- Confirm dialog -->
+    <div id="confirm-overlay" class="hidden">
+      <div class="modal modal-sm">
+        <h3>确认操作</h3>
+        <p id="confirm-message"></p>
+        <div class="modal-actions">
+          <button type="button" id="confirm-ok" class="btn btn-danger">确认</button>
+          <button type="button" id="confirm-cancel" class="btn btn-secondary">取消</button>
         </div>
-        <div id="tab-content">
-          <div id="tab-characters" class="tab-panel active"></div>
-          <div id="tab-relationships" class="tab-panel"></div>
-          <div id="tab-events" class="tab-panel"></div>
-          <div id="tab-outlines" class="tab-panel"></div>
-          <div id="tab-chapters" class="tab-panel"></div>
+      </div>
+    </div>
+
+    <!-- VIEW 1: Novel List -->
+    <section id="view-list">
+      <header class="page-header">
+        <h1>小说管理器</h1>
+        <div class="header-actions">
+          <input type="text" id="search-novels" class="input-search" placeholder="搜索小说..." />
+          <button class="btn btn-primary" id="btn-create-novel">+ 新建小说</button>
         </div>
-      </section>
-    </main>
+      </header>
+      <div id="novel-grid" class="card-grid"></div>
+      <div id="novel-list-empty" class="empty-state hidden">
+        <div class="empty-icon">&#128218;</div>
+        <p>暂无小说，点击「新建小说」开始创作</p>
+      </div>
+    </section>
+
+    <!-- VIEW 2: Novel Detail -->
+    <section id="view-detail" class="hidden">
+      <header class="detail-header">
+        <button class="btn btn-secondary btn-sm" id="btn-back">&larr; 返回</button>
+        <h1 id="detail-novel-name" class="detail-title"></h1>
+        <div class="header-actions">
+          <button class="btn btn-outline btn-sm" id="btn-download-novel">下载全本</button>
+          <button class="btn btn-danger-outline btn-sm" id="btn-delete-novel">删除小说</button>
+        </div>
+      </header>
+
+      <nav class="tabs">
+        <button class="tab-btn active" data-tab="overview">概览</button>
+        <button class="tab-btn" data-tab="characters">角色</button>
+        <button class="tab-btn" data-tab="relationships">关系</button>
+        <button class="tab-btn" data-tab="events">事件</button>
+        <button class="tab-btn" data-tab="outlines">大纲</button>
+        <button class="tab-btn" data-tab="chapters">章节</button>
+        <button class="tab-btn" data-tab="world_settings">世界观</button>
+      </nav>
+
+      <div class="tab-panels">
+        <div id="panel-overview" class="tab-panel active"></div>
+        <div id="panel-characters" class="tab-panel"></div>
+        <div id="panel-relationships" class="tab-panel"></div>
+        <div id="panel-events" class="tab-panel"></div>
+        <div id="panel-outlines" class="tab-panel"></div>
+        <div id="panel-chapters" class="tab-panel"></div>
+        <div id="panel-world_settings" class="tab-panel"></div>
+      </div>
+    </section>
   </div>
   <script type="module" src="./app.js"></script>
 </body>
