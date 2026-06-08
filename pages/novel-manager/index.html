@@ -8,57 +8,67 @@
 </head>
 <body>
   <div id="app">
-    <!-- Toast container -->
     <div id="toast-container"></div>
 
-    <!-- Modal overlay (reused for all forms) -->
-    <div id="modal-overlay" class="hidden">
-      <div class="modal">
+    <div id="modal-overlay" class="overlay hidden">
+      <div class="modal" role="dialog">
         <h3 id="modal-title"></h3>
         <form id="modal-form"></form>
         <div class="modal-actions">
-          <button type="button" id="modal-save" class="btn btn-primary">保存</button>
-          <button type="button" id="modal-cancel" class="btn btn-secondary">取消</button>
+          <button type="button" id="modal-save" class="btn btn-accent">保存</button>
+          <button type="button" id="modal-cancel" class="btn btn-ghost">取消</button>
         </div>
       </div>
     </div>
 
-    <!-- Confirm dialog -->
-    <div id="confirm-overlay" class="hidden">
-      <div class="modal modal-sm">
+    <div id="confirm-overlay" class="overlay hidden">
+      <div class="modal modal-sm" role="alertdialog">
         <h3>确认操作</h3>
-        <p id="confirm-message"></p>
+        <p id="confirm-message" class="confirm-msg"></p>
         <div class="modal-actions">
           <button type="button" id="confirm-ok" class="btn btn-danger">确认</button>
-          <button type="button" id="confirm-cancel" class="btn btn-secondary">取消</button>
+          <button type="button" id="confirm-cancel" class="btn btn-ghost">取消</button>
         </div>
       </div>
     </div>
 
-    <!-- VIEW 1: Novel List -->
+    <!-- List View -->
     <section id="view-list">
       <header class="page-header">
-        <h1>小说管理器</h1>
-        <div class="header-actions">
-          <input type="text" id="search-novels" class="input-search" placeholder="搜索小说..." />
-          <button class="btn btn-primary" id="btn-create-novel">+ 新建小说</button>
+        <div class="header-left">
+          <h1 class="brand">小说管理器</h1>
+          <p class="brand-sub">AI 驱动的小说创作助手</p>
+        </div>
+        <div class="header-right">
+          <div class="search-wrap">
+            <svg class="search-icon" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg>
+            <input type="text" id="search-novels" class="input-search" placeholder="搜索小说..." />
+          </div>
+          <button class="btn btn-accent" id="btn-create-novel">新建小说</button>
         </div>
       </header>
       <div id="novel-grid" class="card-grid"></div>
       <div id="novel-list-empty" class="empty-state hidden">
-        <div class="empty-icon">&#128218;</div>
-        <p>暂无小说，点击「新建小说」开始创作</p>
+        <div class="empty-decor">~</div>
+        <p>还没有小说</p>
+        <p class="empty-hint">点击「新建小说」，开始你的创作之旅</p>
       </div>
     </section>
 
-    <!-- VIEW 2: Novel Detail -->
+    <!-- Detail View -->
     <section id="view-detail" class="hidden">
       <header class="detail-header">
-        <button class="btn btn-secondary btn-sm" id="btn-back">&larr; 返回</button>
+        <button class="btn btn-ghost btn-sm" id="btn-back">
+          <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd"/></svg>
+          返回
+        </button>
         <h1 id="detail-novel-name" class="detail-title"></h1>
-        <div class="header-actions">
-          <button class="btn btn-outline btn-sm" id="btn-download-novel">下载全本</button>
-          <button class="btn btn-danger-outline btn-sm" id="btn-delete-novel">删除小说</button>
+        <div class="detail-actions">
+          <button class="btn btn-outline btn-sm" id="btn-download-novel">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"/></svg>
+            下载全本
+          </button>
+          <button class="btn btn-danger-ghost btn-sm" id="btn-delete-novel">删除</button>
         </div>
       </header>
 
