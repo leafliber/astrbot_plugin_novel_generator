@@ -4,7 +4,6 @@ import asyncio
 import json
 import os
 import shutil
-from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -16,23 +15,17 @@ from .models import Novel
 
 PLUGIN_NAME = "astrbot_plugin_novel_generator"
 
-MAX_LOCKS = 128
-
 
 class NovelStorage:
     def __init__(self, data_base_path: Path):
         self._novels_dir = data_base_path / "plugin_data" / PLUGIN_NAME / "novels"
         self._novels_dir.mkdir(parents=True, exist_ok=True)
         self._kv_plugin = None
-        self._novel_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
+        self._novel_locks: dict[str, asyncio.Lock] = {}
         self._index_lock = asyncio.Lock()
 
     def _get_lock(self, novel_id: str) -> asyncio.Lock:
-        if novel_id in self._novel_locks:
-            self._novel_locks.move_to_end(novel_id)
-        else:
-            if len(self._novel_locks) >= MAX_LOCKS:
-                self._novel_locks.popitem(last=False)
+        if novel_id not in self._novel_locks:
             self._novel_locks[novel_id] = asyncio.Lock()
         return self._novel_locks[novel_id]
 

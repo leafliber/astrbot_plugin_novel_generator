@@ -13,9 +13,8 @@ from typing import Any
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.agent.tool import ToolSet
-from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from quart import jsonify, request
 
 import astrbot.api.message_components as Comp
@@ -86,7 +85,7 @@ class NovelGeneratorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
         super().__init__(context)
         self.config = config
-        data_base_path = Path(get_astrbot_data_path())
+        data_base_path = StarTools.get_data_dir()
         self.storage = NovelStorage(data_base_path)
         self.storage.set_kv_plugin(self)
         self._register_web_apis()

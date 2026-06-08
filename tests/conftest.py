@@ -107,7 +107,12 @@ def _setup_astrbot_mocks():
     # astrbot.api.star
     sys.modules.setdefault(
         "astrbot.api.star",
-        _make_module("astrbot.api.star", Star=_MockStar, Context=type("Context", (), {})),
+        _make_module(
+            "astrbot.api.star",
+            Star=_MockStar,
+            Context=type("Context", (), {}),
+            StarTools=type("StarTools", (), {"get_data_dir": staticmethod(lambda: Path("/tmp/test_astrbot_data"))}),
+        ),
     )
 
     # astrbot.api.message_components
