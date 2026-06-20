@@ -424,11 +424,65 @@ class TestNovelRead:
         await storage.save_novel(novel)
         storage.get_active_novel = AsyncMock(return_value=novel)
         event = _make_event()
-        gen = plugin.novel_read(event, chapter_number=1)
+        gen = plugin.novel_read(event, chapter_ref="1")
         await gen.__anext__()
         call_args = event.plain_result.call_args[0][0]
         assert "开端" in call_args
         assert "正文内容" in call_args
+
+    @pytest.mark.asyncio
+    async def test_read_special_chapter_by_label(self, tmp_data_base):
+        storage = _make_storage(tmp_data_base)
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
+            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
+        plugin.storage = storage
+        plugin.config = _make_config()
+        novel = Novel(
+            name="特殊章节小说",
+            chapters=[
+                Chapter(number=1, order=1.0, title="第一章", content="正文一"),
+                Chapter(number=0, order=0.0, title="缘起", label="序章", content="序章正文"),
+                Chapter(number=0, order=2.0, title="回忆", is_extra=True, content="番外正文"),
+            ],
+        )
+        await storage.save_novel(novel)
+        storage.get_active_novel = AsyncMock(return_value=novel)
+        storage.load_chapter_content = AsyncMock(return_value="序章正文")
+        event = _make_event()
+        gen = plugin.novel_read(event, chapter_ref="序章")
+        await gen.__anext__()
+        call_args = event.plain_result.call_args[0][0]
+        assert "序章" in call_args
+        assert "缘起" in call_args
+        assert "序章正文" in call_args
+
+    @pytest.mark.asyncio
+    async def test_read_special_chapter_extra(self, tmp_data_base):
+        storage = _make_storage(tmp_data_base)
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        with patch.object(NovelGeneratorPlugin, "__init__", lambda self, *a, **kw: None):
+            plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
+        plugin.storage = storage
+        plugin.config = _make_config()
+        novel = Novel(
+            name="番外小说",
+            chapters=[
+                Chapter(number=0, order=1.0, title="回忆", is_extra=True, content="番外正文"),
+            ],
+        )
+        await storage.save_novel(novel)
+        storage.get_active_novel = AsyncMock(return_value=novel)
+        storage.load_chapter_content = AsyncMock(return_value="番外正文")
+        event = _make_event()
+        # is_extra without label → display "番外·回忆"; "番外" should fuzzy-match it
+        gen = plugin.novel_read(event, chapter_ref="番外")
+        await gen.__anext__()
+        call_args = event.plain_result.call_args[0][0]
+        assert "回忆" in call_args
+        assert "番外正文" in call_args
 
     @pytest.mark.asyncio
     async def test_read_nonexistent_chapter(self, tmp_data_base):
@@ -439,14 +493,15 @@ class TestNovelRead:
             plugin = NovelGeneratorPlugin.__new__(NovelGeneratorPlugin)
         plugin.storage = storage
         plugin.config = _make_config()
-        novel = Novel(name="无章节")
+        novel = Novel(name="无章节", chapters=[Chapter(number=1, title="第一章")])
         await storage.save_novel(novel)
         storage.get_active_novel = AsyncMock(return_value=novel)
         event = _make_event()
-        gen = plugin.novel_read(event, chapter_number=99)
+        gen = plugin.novel_read(event, chapter_ref="99")
         await gen.__anext__()
         call_args = event.plain_result.call_args[0][0]
         assert "未找到" in call_args
+        assert "第一章" in call_args
 
 
 class TestNovelChapters:

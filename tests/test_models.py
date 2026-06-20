@@ -249,3 +249,62 @@ class TestNovel:
             "owner_user_id",
         }
         assert set(d.keys()) == expected_keys
+
+
+class TestResolveChapter:
+    def _novel(self):
+        return Novel(
+            name="查找测试",
+            chapters=[
+                Chapter(id="prologue", number=0, order=0.0, title="缘起", label="序章"),
+                Chapter(id="ch1", number=1, order=1.0, title="开端"),
+                Chapter(id="ch2", number=2, order=2.0, title="转折"),
+                Chapter(id="epilogue", number=0, order=3.0, title="落幕", label="终章"),
+                Chapter(id="extra", number=0, order=4.0, title="回忆", is_extra=True),
+                Chapter(id="extra2", number=0, order=5.0, title="前传", label="番外一·前传"),
+            ],
+        )
+
+    def test_by_number(self):
+        n = self._novel()
+        assert n.resolve_chapter("2").id == "ch2"
+
+    def test_by_number_int_like_string(self):
+        n = self._novel()
+        assert n.resolve_chapter("1").id == "ch1"
+
+    def test_by_label_prologue(self):
+        n = self._novel()
+        assert n.resolve_chapter("序章").id == "prologue"
+
+    def test_by_label_epilogue(self):
+        n = self._novel()
+        assert n.resolve_chapter("终章").id == "epilogue"
+
+    def test_by_label_with_detail(self):
+        n = self._novel()
+        assert n.resolve_chapter("番外一·前传").id == "extra2"
+
+    def test_by_display_for_extra(self):
+        n = self._novel()
+        # is_extra without label → display "番外·回忆"
+        assert n.resolve_chapter("番外·回忆").id == "extra"
+
+    def test_fuzzy_match_extra_prefix(self):
+        n = self._novel()
+        # "番外" fuzzy-matches the first extra chapter by order
+        assert n.resolve_chapter("番外").id == "extra"
+
+    def test_by_title(self):
+        n = self._novel()
+        assert n.resolve_chapter("开端").id == "ch1"
+
+    def test_empty_ref(self):
+        assert self._novel().resolve_chapter("") is None
+        assert self._novel().resolve_chapter("   ") is None
+
+    def test_no_match(self):
+        assert self._novel().resolve_chapter("不存在的章节") is None
+
+    def test_no_chapters(self):
+        assert Novel(name="空").resolve_chapter("序章") is None

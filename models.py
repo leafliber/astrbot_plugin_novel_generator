@@ -119,6 +119,37 @@ class Novel:
         c = self.resolve_character_ref(ref)
         return c.id if c else None
 
+    def resolve_chapter(self, ref: str) -> Chapter | None:
+        """根据引用查找章节，兼容普通章节号与特殊章节名。
+
+        支持的引用形式：
+        - 纯数字（如 "1"、"12"）：按章节号 number 匹配，适合普通章节
+        - 文本（如 "序章"、"终章"、"番外一·前传"）：按 label、显示名、标题匹配
+
+        匹配优先级：number > label 精确 > 显示名精确 > 标题精确 > 包含匹配（按 order 取首个）。
+        """
+        ref = (ref or "").strip()
+        if not ref:
+            return None
+        if ref.isdigit():
+            num = int(ref)
+            for ch in self.chapters:
+                if ch.number == num:
+                    return ch
+        for ch in self.chapters:
+            if ch.label and ch.label == ref:
+                return ch
+        for ch in self.chapters:
+            if chapter_display(ch) == ref:
+                return ch
+        for ch in self.chapters:
+            if ch.title and ch.title == ref:
+                return ch
+        for ch in sorted(self.chapters, key=lambda x: x.order):
+            if any(f and ref in f for f in (ch.label, chapter_display(ch), ch.title)):
+                return ch
+        return None
+
     def character_name_by_id(self, character_id: str) -> str:
         for c in self.characters:
             if c.id == character_id:

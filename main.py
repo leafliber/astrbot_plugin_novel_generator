@@ -583,9 +583,18 @@ class NovelGeneratorPlugin(Star):
             if delay > 0 and i < total - 1:
                 await asyncio.sleep(delay + random.uniform(0, 1))
 
+    @staticmethod
+    def _format_chapter_not_found(novel: Novel, ref: str) -> str:
+        if not novel.chapters:
+            return f"未找到「{ref}」，当前小说暂无章节。"
+        lines = [f"未找到「{ref}」。当前可用章节："]
+        for ch in sorted(novel.chapters, key=lambda x: x.order):
+            lines.append(f"  {chapter_display(ch)} {ch.title}")
+        return "\n".join(lines)
+
     @novel.command("read", alias={"读"})
-    async def novel_read(self, event: AstrMessageEvent, chapter_number: int = 0):
-        """阅读小说，可指定章节号"""
+    async def novel_read(self, event: AstrMessageEvent, *, chapter_ref: str = ""):
+        """阅读小说，可指定章节号或名称（如 1、序章、番外）"""
         session_id = self._get_session_id(event)
         novel = await self.storage.get_active_novel(session_id, load_content=False)
         if novel is None:
@@ -593,42 +602,42 @@ class NovelGeneratorPlugin(Star):
                 "当前没有激活的小说，请先使用 /novel create 创建或 /novel switch 切换一本小说。"
             )
             return
-        if chapter_number > 0:
-            for ch in novel.chapters:
-                if ch.number == chapter_number:
-                    content = await self.storage.load_chapter_content(novel.id, ch.id) or ""
-                    display = chapter_display(ch)
-                    async for result in self._yield_segmented(
-                        event, content, header=f"{display} {ch.title}"
-                    ):
-                        yield result
-                    return
-            yield event.plain_result(f"未找到第{chapter_number}章。")
-        else:
-            lines = [f"📖 「{novel.name}」概览"]
-            total_words = sum(ch.content_length for ch in novel.chapters)
-            lines.append(f"角色：{len(novel.characters)} 个")
-            lines.append(f"关系：{len(novel.relationships)} 条")
-            lines.append(f"事件：{len(novel.events)} 个")
-            lines.append(f"大纲：{len(novel.outlines)} 条")
-            lines.append(f"世界观设定：{len(novel.world_settings)} 条")
-            lines.append(f"章节：{len(novel.chapters)} 章（共 {total_words} 字）")
-            if novel.characters:
-                lines.append("\n角色列表：")
-                for c in novel.characters:
-                    lines.append(
-                        f"  • {c.name}: {c.personality[:30] if c.personality else '无描述'}"
-                    )
-            if novel.world_settings:
-                lines.append("\n世界观设定：")
-                for ws in novel.world_settings:
-                    lines.append(f"  • [{ws.category}] {ws.name}")
-            if novel.chapters:
-                lines.append("\n章节目录：")
-                for ch in sorted(novel.chapters, key=lambda x: x.order):
-                    lines.append(f"  {chapter_display(ch)} {ch.title}")
-            async for result in self._yield_segmented(event, "\n".join(lines)):
+        if chapter_ref.strip():
+            target = novel.resolve_chapter(chapter_ref)
+            if target is None:
+                yield event.plain_result(self._format_chapter_not_found(novel, chapter_ref))
+                return
+            content = await self.storage.load_chapter_content(novel.id, target.id) or ""
+            display = chapter_display(target)
+            async for result in self._yield_segmented(
+                event, content, header=f"{display} {target.title}"
+            ):
                 yield result
+            return
+        lines = [f"📖 「{novel.name}」概览"]
+        total_words = sum(ch.content_length for ch in novel.chapters)
+        lines.append(f"角色：{len(novel.characters)} 个")
+        lines.append(f"关系：{len(novel.relationships)} 条")
+        lines.append(f"事件：{len(novel.events)} 个")
+        lines.append(f"大纲：{len(novel.outlines)} 条")
+        lines.append(f"世界观设定：{len(novel.world_settings)} 条")
+        lines.append(f"章节：{len(novel.chapters)} 章（共 {total_words} 字）")
+        if novel.characters:
+            lines.append("\n角色列表：")
+            for c in novel.characters:
+                lines.append(
+                    f"  • {c.name}: {c.personality[:30] if c.personality else '无描述'}"
+                )
+        if novel.world_settings:
+            lines.append("\n世界观设定：")
+            for ws in novel.world_settings:
+                lines.append(f"  • [{ws.category}] {ws.name}")
+        if novel.chapters:
+            lines.append("\n章节目录：")
+            for ch in sorted(novel.chapters, key=lambda x: x.order):
+                lines.append(f"  {chapter_display(ch)} {ch.title}")
+        async for result in self._yield_segmented(event, "\n".join(lines)):
+            yield result
 
     @novel.command("chapters", alias={"章节"})
     async def novel_chapters(self, event: AstrMessageEvent):
@@ -666,8 +675,8 @@ class NovelGeneratorPlugin(Star):
         )
 
     @novel.command("download", alias={"下载"})
-    async def novel_download(self, event: AstrMessageEvent, *, chapter_number: int = 0):
-        """下载小说TXT文件，可指定章节号，不指定则下载全本"""
+    async def novel_download(self, event: AstrMessageEvent, *, chapter_ref: str = ""):
+        """下载小说TXT文件，可指定章节号或名称（如 1、序章、番外），不指定则下载全本"""
         session_id = self._get_session_id(event)
         novel = await self.storage.get_active_novel(session_id, load_content=False)
         if novel is None:
@@ -679,14 +688,11 @@ class NovelGeneratorPlugin(Star):
             yield event.plain_result("当前小说暂无章节，无法下载。")
             return
 
-        if chapter_number > 0:
-            target_ch = None
-            for ch in novel.chapters:
-                if ch.number == chapter_number:
-                    target_ch = ch
-                    break
+        single_body = None
+        if chapter_ref.strip():
+            target_ch = novel.resolve_chapter(chapter_ref)
             if target_ch is None:
-                yield event.plain_result(f"未找到第{chapter_number}章。")
+                yield event.plain_result(self._format_chapter_not_found(novel, chapter_ref))
                 return
             content = await self.storage.load_chapter_content(novel.id, target_ch.id) or ""
             if not content:
@@ -694,9 +700,8 @@ class NovelGeneratorPlugin(Star):
                 return
             display = chapter_display(target_ch)
             filename = f"{novel.name}_{display}_{target_ch.title}.txt"
-            body = f"{novel.name}\n{display} {target_ch.title}\n\n{content}"
+            single_body = f"{novel.name}\n{display} {target_ch.title}\n\n{content}"
         else:
-            sorted_chapters = sorted(novel.chapters, key=lambda x: x.order)
             filename = f"{novel.name}_全本.txt"
 
         safe_filename = re.sub(r'[<>:"/\\|?*]', "_", filename)
@@ -710,10 +715,11 @@ class NovelGeneratorPlugin(Star):
                 except OSError:
                     pass
         tmp_path = tmp_dir / safe_filename
-        if chapter_number > 0:
-            tmp_path.write_text(body, encoding="utf-8")
+        if single_body is not None:
+            tmp_path.write_text(single_body, encoding="utf-8")
         else:
             # Stream full novel to file chapter by chapter to avoid holding all content in memory
+            sorted_chapters = sorted(novel.chapters, key=lambda x: x.order)
             with open(tmp_path, "w", encoding="utf-8") as f:
                 f.write(f"{novel.name}\n{'=' * len(novel.name)}\n")
                 for ch in sorted_chapters:
