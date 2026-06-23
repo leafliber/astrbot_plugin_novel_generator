@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://moe-counter.glitch.me/get/@astrbot_plugin_novel_generator" alt="Visitors">
+  <img src="https://count.getloli.com/get/@astrbot_plugin_novel_generator?theme=moebooru" alt="Visitors">
 </p>
 
 <h1 align="center">✨ 小说创作Agent ✨</h1>
