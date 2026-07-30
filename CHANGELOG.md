@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.1] - 2026-07-30
+
+### Security
+
+- 修复路径遍历漏洞：对 `novel_id`、`chapter_id` 增加合法性校验（仅允许字母、数字、连字符、下划线），防止恶意 ID 携带 `..` 或路径分隔符逃逸出 `novels/` 数据目录
+- 存储层在所有文件系统操作（读取、写入、删除）前统一校验 ID，杜绝 `shutil.rmtree` 误删目录的风险
+- Web API 对非法 `novel_id` 返回 400 错误，而非触发服务器异常
+
 ## [0.2.0] - 2026-06-09
 
 ### Added

@@ -29,7 +29,7 @@ from .models import (
     WorldSetting,
     chapter_display,
 )
-from .storage import PLUGIN_NAME, NovelStorage
+from .storage import PLUGIN_NAME, NovelStorage, validate_id
 from .tools import NOVEL_TOOLS, make_readonly_tools
 
 
@@ -800,7 +800,19 @@ class NovelGeneratorPlugin(Star):
         summaries = await self.storage.list_novel_summaries()
         return jsonify(summaries)
 
+    @staticmethod
+    def _check_novel_id(novel_id):
+        """Return a 400 response tuple if novel_id is unsafe, else None."""
+        try:
+            validate_id(novel_id, "novel_id")
+            return None
+        except ValueError:
+            return jsonify({"error": "Invalid novel id"}), 400
+
     async def api_get_novel(self, novel_id):
+        err = self._check_novel_id(novel_id)
+        if err:
+            return err
         novel = await self.storage.load_novel(novel_id)
         if novel is None:
             return jsonify({"error": "Novel not found"}), 404
@@ -825,12 +837,18 @@ class NovelGeneratorPlugin(Star):
         )
 
     async def api_delete_novel(self, novel_id):
+        err = self._check_novel_id(novel_id)
+        if err:
+            return err
         deleted = await self.storage.delete_novel(novel_id)
         if not deleted:
             return jsonify({"error": "Novel not found"}), 404
         return jsonify({"success": True})
 
     async def api_update_novel(self, novel_id):
+        err = self._check_novel_id(novel_id)
+        if err:
+            return err
 
         async def _modify(novel):
             data = await request.get_json() or {}
@@ -846,6 +864,10 @@ class NovelGeneratorPlugin(Star):
 
     async def api_download_novel(self, novel_id):
         from quart import send_file
+
+        err = self._check_novel_id(novel_id)
+        if err:
+            return err
 
         chapter_id = request.args.get("chapter", "")
 
@@ -904,6 +926,9 @@ class NovelGeneratorPlugin(Star):
         _list_fields = {"involved_characters"}
 
         async def handler(novel_id):
+            err = self._check_novel_id(novel_id)
+            if err:
+                return err
             if request.method == "GET":
                 novel = await self.storage.load_novel(novel_id, load_content=load_content)
                 if novel is None:
@@ -965,6 +990,9 @@ class NovelGeneratorPlugin(Star):
         load_content = cfg.get("needs_content", True)
 
         async def handler(novel_id, item_id):
+            err = self._check_novel_id(novel_id)
+            if err:
+                return err
             data = await request.get_json() or {}
             result = [None]
 

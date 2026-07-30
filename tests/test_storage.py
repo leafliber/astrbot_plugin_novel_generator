@@ -10,7 +10,7 @@ from astrbot_plugin_novel_generator.models import (
     Chapter,
     Novel,
 )
-from astrbot_plugin_novel_generator.storage import NovelStorage, PLUGIN_NAME
+from astrbot_plugin_novel_generator.storage import NovelStorage, PLUGIN_NAME, validate_id
 
 
 @pytest.fixture
@@ -203,3 +203,36 @@ class TestNovelStoragePath:
             / "abc123.json"
         )
         assert path == expected
+
+
+class TestIdValidation:
+    @pytest.mark.parametrize("bad_id", ["../etc/passwd", "..", "a/b", "a\\b", "", "id with space", "novel:1"])
+    def test_validate_id_rejects_unsafe(self, bad_id):
+        with pytest.raises(ValueError):
+            validate_id(bad_id, "novel_id")
+
+    @pytest.mark.parametrize("good_id", ["abc123", "a-b_c", "ABC", "0123456789ab"])
+    def test_validate_id_accepts_safe(self, good_id):
+        assert validate_id(good_id, "novel_id") == good_id
+
+    def test_novel_path_rejects_traversal(self, storage):
+        with pytest.raises(ValueError):
+            storage._novel_path("../evil")
+
+    def test_chapters_dir_rejects_traversal(self, storage):
+        with pytest.raises(ValueError):
+            storage._chapters_dir("../evil")
+
+    def test_chapter_path_rejects_traversal(self, storage):
+        with pytest.raises(ValueError):
+            storage._chapter_path("abc123", "../../evil")
+
+    @pytest.mark.asyncio
+    async def test_delete_novel_rejects_traversal(self, storage):
+        with pytest.raises(ValueError):
+            await storage.delete_novel("../evil")
+
+    @pytest.mark.asyncio
+    async def test_load_novel_rejects_traversal(self, storage):
+        with pytest.raises(ValueError):
+            await storage.load_novel("../evil")

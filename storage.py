@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,20 @@ from .models import Novel
 
 
 PLUGIN_NAME = "astrbot_plugin_novel_generator"
+
+SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def validate_id(value: str, kind: str = "id") -> str:
+    """Validate an identifier that will be used to build filesystem paths.
+
+    Restricts values to alphanumerics, hyphens and underscores so that
+    ``..`` or path separators cannot traverse out of the data directory.
+    Raises ``ValueError`` for anything else.
+    """
+    if not isinstance(value, str) or not SAFE_ID_RE.match(value):
+        raise ValueError(f"Invalid {kind}: {value!r}")
+    return value
 
 
 class NovelStorage:
@@ -66,6 +81,7 @@ class NovelStorage:
         await self._remove_active_novel_id(session_id)
 
     def _novel_path(self, novel_id: str) -> Path:
+        validate_id(novel_id, "novel_id")
         return self._novels_dir / f"{novel_id}.json"
 
     def _index_path(self) -> Path:
@@ -140,14 +156,17 @@ class NovelStorage:
         self._write_index_sync(entries)
 
     def _ensure_chapters_dir(self, novel_id: str) -> Path:
+        validate_id(novel_id, "novel_id")
         d = self._novels_dir / novel_id
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     def _chapters_dir(self, novel_id: str) -> Path:
+        validate_id(novel_id, "novel_id")
         return self._novels_dir / novel_id
 
     def _chapter_path(self, novel_id: str, chapter_id: str) -> Path:
+        validate_id(chapter_id, "chapter_id")
         return self._chapters_dir(novel_id) / f"{chapter_id}.txt"
 
     def _save_novel_sync(self, novel: Novel, save_content: bool = True):
@@ -215,7 +234,7 @@ class NovelStorage:
 
     def _delete_novel_sync(self, novel_id: str) -> bool:
         path = self._novel_path(novel_id)
-        chapters_dir = self._novels_dir / novel_id
+        chapters_dir = self._chapters_dir(novel_id)
         deleted = False
         if path.exists():
             path.unlink()
