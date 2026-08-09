@@ -16,7 +16,7 @@ from .models import Novel
 
 PLUGIN_NAME = "astrbot_plugin_novel_generator"
 
-SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+SAFE_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def validate_id(value: str, kind: str = "id") -> str:
@@ -26,7 +26,7 @@ def validate_id(value: str, kind: str = "id") -> str:
     ``..`` or path separators cannot traverse out of the data directory.
     Raises ``ValueError`` for anything else.
     """
-    if not isinstance(value, str) or not SAFE_ID_RE.match(value):
+    if not isinstance(value, str) or not SAFE_ID_RE.fullmatch(value):
         raise ValueError(f"Invalid {kind}: {value!r}")
     return value
 
@@ -40,6 +40,7 @@ class NovelStorage:
         self._index_lock = asyncio.Lock()
 
     def _get_lock(self, novel_id: str) -> asyncio.Lock:
+        validate_id(novel_id, "novel_id")
         if novel_id not in self._novel_locks:
             self._novel_locks[novel_id] = asyncio.Lock()
         return self._novel_locks[novel_id]
@@ -54,6 +55,7 @@ class NovelStorage:
         return await self._kv_plugin.get_kv_data(key, None)
 
     async def _set_active_novel_id(self, session_id: str, novel_id: str):
+        validate_id(novel_id, "novel_id")
         if self._kv_plugin is None:
             return
         key = f"active_novel:{session_id}"
@@ -170,13 +172,20 @@ class NovelStorage:
         return self._chapters_dir(novel_id) / f"{chapter_id}.txt"
 
     def _save_novel_sync(self, novel: Novel, save_content: bool = True):
+        validate_id(novel.id, "novel_id")
+        # Validate every path component before performing any writes.  This
+        # prevents a malformed in-memory or migrated Chapter from causing a
+        # partial save, or persisting an ID that could traverse on a later load.
+        for ch in novel.chapters:
+            validate_id(ch.id, "chapter_id")
+
         novel.updated_at = datetime.now().isoformat()
         if save_content:
             chapters_dir = self._ensure_chapters_dir(novel.id)
             active_ids = {ch.id for ch in novel.chapters}
             for ch in novel.chapters:
                 new_length = len(ch.content)
-                ch_path = chapters_dir / f"{ch.id}.txt"
+                ch_path = self._chapter_path(novel.id, ch.id)
                 # Only rewrite if content actually changed
                 needs_write = (
                     not ch_path.exists()

@@ -206,7 +206,19 @@ class TestNovelStoragePath:
 
 
 class TestIdValidation:
-    @pytest.mark.parametrize("bad_id", ["../etc/passwd", "..", "a/b", "a\\b", "", "id with space", "novel:1"])
+    @pytest.mark.parametrize(
+        "bad_id",
+        [
+            "../etc/passwd",
+            "..",
+            "a/b",
+            "a\\b",
+            "",
+            "id with space",
+            "novel:1",
+            "valid-looking-id\n",
+        ],
+    )
     def test_validate_id_rejects_unsafe(self, bad_id):
         with pytest.raises(ValueError):
             validate_id(bad_id, "novel_id")
@@ -228,11 +240,40 @@ class TestIdValidation:
             storage._chapter_path("abc123", "../../evil")
 
     @pytest.mark.asyncio
-    async def test_delete_novel_rejects_traversal(self, storage):
+    async def test_delete_novel_rejects_traversal(self, storage, tmp_data_base):
+        outside_dir = tmp_data_base / "outside"
+        outside_dir.mkdir()
+        sentinel = outside_dir / "keep.txt"
+        sentinel.write_text("must not be deleted", encoding="utf-8")
+
         with pytest.raises(ValueError):
-            await storage.delete_novel("../evil")
+            await storage.delete_novel("../outside")
+
+        assert sentinel.read_text(encoding="utf-8") == "must not be deleted"
+        assert "../outside" not in storage._novel_locks
 
     @pytest.mark.asyncio
     async def test_load_novel_rejects_traversal(self, storage):
         with pytest.raises(ValueError):
             await storage.load_novel("../evil")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("save_content", [True, False])
+    async def test_save_rejects_unsafe_chapter_id_before_writing(
+        self, storage, tmp_data_base, save_content
+    ):
+        novel = Novel(
+            id="safe-novel",
+            name="malformed",
+            chapters=[
+                Chapter(id="safe-chapter", content="safe content"),
+                Chapter(id="../../escaped", content="escaped content"),
+            ],
+        )
+
+        with pytest.raises(ValueError):
+            await storage.save_novel(novel, save_content=save_content)
+
+        assert not (tmp_data_base / "escaped.txt").exists()
+        assert not storage._novel_path(novel.id).exists()
+        assert not storage._chapters_dir(novel.id).exists()

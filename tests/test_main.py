@@ -555,6 +555,47 @@ class TestWebAPIRegistration:
         assert any("chapters" in p for p in registered_paths)
 
 
+class TestWebAPIIdValidation:
+    @pytest.mark.parametrize(
+        "novel_id",
+        ["../outside", "..", "nested/id", "nested\\id", "safe-id\n"],
+    )
+    def test_rejects_unsafe_novel_id(self, novel_id):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        with patch(
+            "astrbot_plugin_novel_generator.main.jsonify",
+            side_effect=lambda body: body,
+        ):
+            response = NovelGeneratorPlugin._check_novel_id(novel_id)
+
+        assert response is not None
+        assert response[1] == 400
+
+    def test_accepts_safe_novel_id(self):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        assert NovelGeneratorPlugin._check_novel_id("novel-123_ABC") is None
+
+    @pytest.mark.asyncio
+    async def test_delete_rejects_traversal_before_storage_call(self):
+        from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
+
+        with patch.object(NovelGeneratorPlugin, "__init__", lambda self: None):
+            plugin = NovelGeneratorPlugin()
+        plugin.storage = MagicMock()
+        plugin.storage.delete_novel = AsyncMock()
+
+        with patch(
+            "astrbot_plugin_novel_generator.main.jsonify",
+            side_effect=lambda body: body,
+        ):
+            response = await plugin.api_delete_novel("../outside")
+
+        assert response == ({"error": "Invalid novel id"}, 400)
+        plugin.storage.delete_novel.assert_not_awaited()
+
+
 class TestSplitText:
     def test_short_text_returns_single_segment(self):
         from astrbot_plugin_novel_generator.main import NovelGeneratorPlugin
